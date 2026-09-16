@@ -15,11 +15,18 @@ commands, because those command IDs are not documented and could change.
 """
 
 import atexit
+import contextlib
 import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
 
 PORT = int(os.environ.get("WOKWI_SERIAL_PORT", "4000"))
 HOST = "127.0.0.1"
@@ -37,6 +44,31 @@ BOOT_ATTEMPTS = 6
 BOOT_BACKOFF = 0.5
 # mpremote blocks if the simulation is paused, so cap each attempt.
 ATTEMPT_TIMEOUT = 20
+
+
+SERIAL_LOCK = os.path.join(tempfile.gettempdir(), "cyberdeck-serial.lock")
+
+
+@contextlib.contextmanager
+def serial_lock():
+    """Only one thing may talk to the board at a time.
+
+    Two mpremote sessions on the same serial line interleave and corrupt each
+    other's raw-REPL protocol, which shows up as stray bytes and ENOENT errors
+    that have nothing to do with your code. The watcher and the manual tasks
+    both take this, so they queue instead of colliding.
+    """
+    if fcntl is None:
+        yield
+        return
+    handle = open(SERIAL_LOCK, "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
 
 
 def python_with_mpremote() -> str:
@@ -114,11 +146,12 @@ def send() -> bool:
     """Copy the script over and restart the board. True if it landed."""
     for attempt in range(1, BOOT_ATTEMPTS + 1):
         try:
-            result = subprocess.run(
-                [PYTHON, "-m", "mpremote", "connect", DEVICE,
-                 "fs", "cp", SCRIPT, f":{SCRIPT}", "+", "soft-reset"],
-                capture_output=True, text=True, timeout=ATTEMPT_TIMEOUT,
-            )
+            with serial_lock():
+                result = subprocess.run(
+                    [PYTHON, "-m", "mpremote", "connect", DEVICE,
+                     "fs", "cp", SCRIPT, f":{SCRIPT}", "+", "soft-reset"],
+                    capture_output=True, text=True, timeout=ATTEMPT_TIMEOUT,
+                )
         except subprocess.TimeoutExpired:
             result = None
         if result is not None and result.returncode == 0:
@@ -133,12 +166,25 @@ def send() -> bool:
             if result is not None:
                 sys.stderr.write(result.stderr or result.stdout)
             sys.stderr.flush()
-            print("\n  Could not reach the board. Two usual reasons:", flush=True)
-            print("  - the Wokwi tab is not visible, which pauses the simulation", flush=True)
-            print("  - the simulation was stopped before this finished", flush=True)
+            print("\n  Could not reach the board.", flush=True)
+            print("  Almost always this: the Wokwi tab is not the visible tab.", flush=True)
+            print("  Wokwi pauses the simulation when its tab is hidden, so the", flush=True)
+            print("  board stops answering. Click the Wokwi tab and try again.", flush=True)
             return False
         time.sleep(BOOT_BACKOFF * attempt)
     return False
+
+
+def attach() -> None:
+    """Stream the board's output into this terminal until the sim stops."""
+    try:
+        with serial_lock():
+            # Not captured: the point is to let it print straight through.
+            subprocess.run([PYTHON, "-m", "mpremote", "connect", DEVICE, "repl"])
+    except KeyboardInterrupt:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        print(f"  Lost the connection to the board ({exc.__class__.__name__}).", flush=True)
 
 
 def send_once() -> int:
@@ -147,7 +193,9 @@ def send_once() -> int:
         print("The simulator is not running. Press Start in the Wokwi tab first.", flush=True)
         return 1
     if send():
-        print(f"{SCRIPT} is on the board and running. Output appears in the Wokwi tab.", flush=True)
+        print(f"{SCRIPT} is running. Its output appears below. Ctrl-] to leave.", flush=True)
+        print("-" * 60, flush=True)
+        attach()
         return 0
     return 1
 
@@ -157,7 +205,8 @@ def repl() -> int:
     if not port_is_open():
         print("The simulator is not running. Press Start in the Wokwi tab first.", flush=True)
         return 1
-    return subprocess.run([PYTHON, "-m", "mpremote", "connect", DEVICE, "repl"]).returncode
+    with serial_lock():
+        return subprocess.run([PYTHON, "-m", "mpremote", "connect", DEVICE, "repl"]).returncode
 
 
 def main() -> None:
@@ -172,7 +221,13 @@ def main() -> None:
 
         print(f"\nSimulator running. Sending {SCRIPT} ...", flush=True)
         if send():
-            print(f"{SCRIPT} is on the board and running. Output appears in the Wokwi tab.", flush=True)
+            print(f"{SCRIPT} is running. Its output appears below.", flush=True)
+            print("-" * 60, flush=True)
+            # Attach to the board so print() from the participant's code shows
+            # up here. Without this the output goes to the serial port and
+            # nothing is listening, which looks like the code did not run.
+            attach()
+            print("-" * 60, flush=True)
 
         # Hold here until the simulation stops, so the next Start re-sends.
         while port_is_open():
