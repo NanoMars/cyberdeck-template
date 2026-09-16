@@ -25,6 +25,7 @@ PORT = int(os.environ.get("WOKWI_SERIAL_PORT", "4000"))
 HOST = "127.0.0.1"
 SCRIPT = os.environ.get("CYBERDECK_MAIN", "main.py")
 DEVICE = f"port:rfc2217://localhost:{PORT}"
+VENV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".venv")
 # Binding this port is how a second copy of the watcher notices the first.
 LOCK_PORT = int(os.environ.get("CYBERDECK_LOCK_PORT", "47321"))
 
@@ -36,6 +37,48 @@ BOOT_ATTEMPTS = 6
 BOOT_BACKOFF = 0.5
 # mpremote blocks if the simulation is paused, so cap each attempt.
 ATTEMPT_TIMEOUT = 20
+
+
+def python_with_mpremote() -> str:
+    """Return an interpreter that can run mpremote, creating one if need be.
+
+    In a Codespace the dev container already installed it. Locally there is
+    usually nothing, and the system Python on macOS refuses installs anyway.
+    So fall back to a project .venv and set it up once, rather than making
+    somebody read an error and go hunting.
+    """
+    if _has_mpremote(sys.executable):
+        return sys.executable
+
+    venv_python = os.path.join(VENV, "bin", "python")
+    if os.name == "nt":
+        venv_python = os.path.join(VENV, "Scripts", "python.exe")
+    if os.path.exists(venv_python) and _has_mpremote(venv_python):
+        return venv_python
+
+    print("Setting up mpremote, the tool that talks to the board. Once only.", flush=True)
+    if not os.path.exists(venv_python):
+        subprocess.run([sys.executable, "-m", "venv", VENV], check=True)
+    result = subprocess.run(
+        [venv_python, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "mpremote>=1.24"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not _has_mpremote(venv_python):
+        sys.stderr.write(result.stderr or result.stdout)
+        sys.stderr.flush()
+        print("\n  Could not install mpremote. Run this yourself and try again:", flush=True)
+        print(f"    {sys.executable} -m venv .venv && .venv/bin/pip install mpremote", flush=True)
+        sys.exit(1)
+    print("Ready.", flush=True)
+    return venv_python
+
+
+def _has_mpremote(python: str) -> bool:
+    try:
+        return subprocess.run([python, "-c", "import mpremote"],
+                              capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def claim_single_instance() -> bool:
@@ -72,7 +115,7 @@ def send() -> bool:
     for attempt in range(1, BOOT_ATTEMPTS + 1):
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "mpremote", "connect", DEVICE,
+                [PYTHON, "-m", "mpremote", "connect", DEVICE,
                  "fs", "cp", SCRIPT, f":{SCRIPT}", "+", "soft-reset"],
                 capture_output=True, text=True, timeout=ATTEMPT_TIMEOUT,
             )
@@ -98,6 +141,25 @@ def send() -> bool:
     return False
 
 
+def send_once() -> int:
+    """Send the code now, without waiting for anything."""
+    if not port_is_open():
+        print("The simulator is not running. Press Start in the Wokwi tab first.", flush=True)
+        return 1
+    if send():
+        print(f"{SCRIPT} is on the board and running. Output appears in the Wokwi tab.", flush=True)
+        return 0
+    return 1
+
+
+def repl() -> int:
+    """Hand the terminal straight to the board."""
+    if not port_is_open():
+        print("The simulator is not running. Press Start in the Wokwi tab first.", flush=True)
+        return 1
+    return subprocess.run([PYTHON, "-m", "mpremote", "connect", DEVICE, "repl"]).returncode
+
+
 def main() -> None:
     if not claim_single_instance():
         print("Another watcher is already running. Nothing to do here.", flush=True)
@@ -119,7 +181,14 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    PYTHON = python_with_mpremote()
+    mode = sys.argv[1] if len(sys.argv) > 1 else "--watch"
     try:
-        main()
+        if mode == "--once":
+            sys.exit(send_once())
+        elif mode == "--repl":
+            sys.exit(repl())
+        else:
+            main()
     except KeyboardInterrupt:
-        print("\nStopped watching.", flush=True)
+        print("\nStopped.", flush=True)
