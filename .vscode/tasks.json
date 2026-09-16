@@ -2,22 +2,36 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Run on Wokwi",
+      // Runs by itself when the folder opens. Watches for the simulator and
+      // sends main.py across the moment you press Start in the Wokwi tab.
+      "label": "Send code on simulator start",
       "type": "shell",
-      // Copies main.py onto the simulated board, then soft-resets so it runs.
-      // The simulator's filesystem is wiped every time it restarts, which is
-      // why this copies rather than relying on anything being there already.
-      "command": "python -m mpremote connect port:rfc2217://localhost:4000 fs cp main.py :main.py + soft-reset",
+      "command": "python3 .vscode/autorun.py",
+      "isBackground": true,
+      "runOptions": { "runOn": "folderOpen" },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "wokwi",
+        "clear": true
+      },
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated" },
-      "detail": "Start the simulator first, then run this. Keep the Wokwi tab visible."
+      "detail": "Starts automatically. Press Start in the Wokwi tab and your code is sent."
+    },
+    {
+      "label": "Send code now",
+      "type": "shell",
+      "command": "python3 -m mpremote connect port:rfc2217://localhost:4000 fs cp main.py :main.py + soft-reset",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "wokwi" },
+      "detail": "Send main.py without waiting. The simulator must already be running."
     },
     {
       "label": "Open a MicroPython prompt",
       "type": "shell",
-      "command": "python -m mpremote connect port:rfc2217://localhost:4000 repl",
+      "command": "python3 -m mpremote connect port:rfc2217://localhost:4000 repl",
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "wokwi" },
       "detail": "Type Python straight at the board. Ctrl-] to leave."
     }
   ]
