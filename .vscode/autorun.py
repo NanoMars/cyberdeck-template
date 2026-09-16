@@ -163,19 +163,43 @@ def port_is_open() -> bool:
 
 
 def send() -> bool:
-    """Copy the script over and restart the board. True if it landed."""
+    """Copy the script to the board and run it, streaming its output here.
+
+    Deliberately one mpremote session, holding the serial lock throughout.
+
+    The obvious version - copy, soft-reset, then attach separately - loses the
+    beginning of the output. A soft reset starts main.py immediately, so
+    anything it prints in its first moments goes out on the serial line while
+    nothing is connected, and the reader that attaches afterwards has already
+    missed it. `run` executes the script on a connection that is already open,
+    so the very first print arrives.
+    """
     for attempt in range(1, BOOT_ATTEMPTS + 1):
         try:
             with serial_lock():
-                result = subprocess.run(
+                # Copy quietly first. This is also the connection test: if the
+                # board is not answering yet, fail here rather than half way
+                # through handing the terminal over.
+                copied = subprocess.run(
                     [PYTHON, "-m", "mpremote", "connect", DEVICE,
-                     "fs", "cp", SCRIPT, f":{SCRIPT}", "+", "soft-reset"],
+                     "fs", "cp", SCRIPT, f":{SCRIPT}"],
                     capture_output=True, text=True, timeout=ATTEMPT_TIMEOUT,
                 )
+                if copied.returncode == 0:
+                    print(f"{SCRIPT} is running. Its output appears below.", flush=True)
+                    print("-" * 60, flush=True)
+                    # Not captured, so the board's output lands in this
+                    # terminal as it happens, from the first line onwards.
+                    subprocess.run(
+                        [PYTHON, "-m", "mpremote", "connect", DEVICE, "run", SCRIPT]
+                    )
+                    print("-" * 60, flush=True)
+                    return True
+                result = copied
         except subprocess.TimeoutExpired:
             result = None
-        if result is not None and result.returncode == 0:
-            return True
+        except KeyboardInterrupt:
+            raise
         # The simulation may have been stopped mid-attempt. Do not keep
         # retrying against a port that has gone away.
         if not port_is_open():
@@ -195,29 +219,12 @@ def send() -> bool:
     return False
 
 
-def attach() -> None:
-    """Stream the board's output into this terminal until the sim stops."""
-    try:
-        with serial_lock():
-            # Not captured: the point is to let it print straight through.
-            subprocess.run([PYTHON, "-m", "mpremote", "connect", DEVICE, "repl"])
-    except KeyboardInterrupt:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        print(f"  Lost the connection to the board ({exc.__class__.__name__}).", flush=True)
-
-
 def send_once() -> int:
     """Send the code now, without waiting for anything."""
     if not port_is_open():
         print("The simulator is not running. Press Start in the Wokwi tab first.", flush=True)
         return 1
-    if send():
-        print(f"{SCRIPT} is running. Its output appears below. Ctrl-] to leave.", flush=True)
-        print("-" * 60, flush=True)
-        attach()
-        return 0
-    return 1
+    return 0 if send() else 1
 
 
 def repl() -> int:
@@ -240,14 +247,7 @@ def main() -> None:
             time.sleep(0.5)
 
         print(f"\nSimulator running. Sending {SCRIPT} ...", flush=True)
-        if send():
-            print(f"{SCRIPT} is running. Its output appears below.", flush=True)
-            print("-" * 60, flush=True)
-            # Attach to the board so print() from the participant's code shows
-            # up here. Without this the output goes to the serial port and
-            # nothing is listening, which looks like the code did not run.
-            attach()
-            print("-" * 60, flush=True)
+        send()
 
         # Hold here until the simulation stops, so the next Start re-sends.
         while port_is_open():
