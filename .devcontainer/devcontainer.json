@@ -9,10 +9,13 @@
   "postCreateCommand": "pip install --user -r requirements.txt",
   "postStartCommand": "bash .devcontainer/setup-hackatime.sh",
 
-  // Starts the watcher that sends main.py when the simulator starts.
-  // Done here rather than as a folderOpen task because automatic tasks
-  // are disabled by default and would prompt every participant.
-  "postAttachCommand": "python3 .vscode/autorun.py",
+  // The watcher is NOT started here. It is the folderOpen task in
+  // .vscode/tasks.json, enabled by task.allowAutomaticTasks below.
+  //
+  // Starting it here as well meant two watchers raced for the serial port.
+  // One bowed out, but which one won decided where the output went, and
+  // postAttachCommand output lands in the collapsed setup log rather than a
+  // terminal. It also has no TTY, so the REPL could not be typed into.
 
 
   "customizations": {
@@ -32,6 +35,10 @@
         "python.analysis.diagnosticSeverityOverrides": {
           "reportMissingModuleSource": "none"
         },
+        // Lets the folderOpen task start without prompting. The watcher has
+        // to own a real terminal, because that is where the board's output is
+        // printed and where the participant types.
+        "task.allowAutomaticTasks": "on",
         "files.exclude": { "**/__pycache__": true },
         "terminal.integrated.defaultProfile.linux": "bash"
       }
