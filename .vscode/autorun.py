@@ -44,6 +44,9 @@ BOOT_ATTEMPTS = 6
 BOOT_BACKOFF = 0.5
 # mpremote blocks if the simulation is paused, so cap each attempt.
 ATTEMPT_TIMEOUT = 20
+# How long to let the serial server introduce itself before deciding that
+# whatever accepted the connection is not the simulator.
+HANDSHAKE_TIMEOUT = 1.0
 
 
 SERIAL_LOCK = os.path.join(tempfile.gettempdir(), "cyberdeck-serial.lock")
@@ -134,12 +137,29 @@ def claim_single_instance() -> bool:
 
 
 def port_is_open() -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.3)
-        try:
-            return sock.connect_ex((HOST, PORT)) == 0
-        except OSError:
-            return False
+    """True when something is listening AND it behaves like the simulator.
+
+    A plain connect is not enough. A port forwarder accepts the connection and
+    then never says anything, which looks identical to a running board until
+    mpremote blocks on it for two minutes. Wokwi's RFC2217 server starts the
+    telnet negotiation as soon as a client connects, so a socket that accepts
+    and then stays silent is not the simulator.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.3)
+            if sock.connect_ex((HOST, PORT)) != 0:
+                return False
+
+            # IAC (0xff) opens every telnet option negotiation. The real server
+            # sends one straight away; a forwarder sends nothing and times out.
+            sock.settimeout(HANDSHAKE_TIMEOUT)
+            try:
+                return sock.recv(1) == b"\xff"
+            except (TimeoutError, socket.timeout):
+                return False
+    except OSError:
+        return False
 
 
 def send() -> bool:

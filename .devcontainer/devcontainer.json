@@ -53,8 +53,17 @@
     "HACKATIME_API_KEY": "${localEnv:HACKATIME_API_KEY}"
   },
 
-  "forwardPorts": [4000],
+  // Port 4000 is deliberately NOT forwarded.
+  //
+  // forwardPorts makes the VS Code server bind the port itself, from the
+  // moment the container starts. That breaks the watcher twice over: a plain
+  // TCP connect to 4000 always succeeds, so it thinks the simulator is running
+  // and hangs trying to talk to a socket that accepts and never answers; and
+  // Wokwi cannot bind the port it needs for its own serial server.
+  //
+  // Nothing outside the container needs port 4000. Wokwi's serial server and
+  // mpremote are both inside it and talk over localhost.
   "portsAttributes": {
-    "4000": { "label": "Wokwi serial", "onAutoForward": "silent" }
+    "4000": { "label": "Wokwi serial", "onAutoForward": "ignore" }
   }
 }
