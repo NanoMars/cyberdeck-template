@@ -5,10 +5,10 @@ Press "Start the simulation" in the Wokwi tab and your code is on the board a
 moment later. No task to remember, no command to type.
 
 How it works: the Wokwi extension opens a serial server on port 4000 when the
-simulation starts. This watches that port. When it opens, it waits for
-MicroPython to finish booting, copies main.py across and soft-resets so the
-board runs it. When the simulation stops the port closes, and this arms itself
-again for the next run.
+simulation starts. This watches that port. When it opens, it copies main.py to
+the board and runs it on the same connection, so everything the code prints
+appears here from its very first line. When the simulation stops the port
+closes, and this arms itself again for the next run.
 
 Deliberately not clever. It polls a port rather than hooking Wokwi's own
 commands, because those command IDs are not documented and could change.
