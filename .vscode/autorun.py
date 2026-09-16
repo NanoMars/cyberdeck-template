@@ -64,9 +64,6 @@ BOOT_ATTEMPTS = 6
 BOOT_BACKOFF = 0.5
 # mpremote blocks if the simulation is paused, so cap each attempt.
 ATTEMPT_TIMEOUT = 20
-# How long to let the serial server introduce itself before deciding that
-# whatever accepted the connection is not the simulator.
-HANDSHAKE_TIMEOUT = 1.0
 
 
 SERIAL_LOCK = os.path.join(tempfile.gettempdir(), "cyberdeck-serial.lock")
@@ -157,27 +154,22 @@ def claim_single_instance() -> bool:
 
 
 def port_is_open() -> bool:
-    """True when something is listening AND it behaves like the simulator.
+    """True when something is listening on the serial port.
 
-    A plain connect is not enough. A port forwarder accepts the connection and
-    then never says anything, which looks identical to a running board until
-    mpremote blocks on it for two minutes. Wokwi's RFC2217 server starts the
-    telnet negotiation as soon as a client connects, so a socket that accepts
-    and then stays silent is not the simulator.
+    A plain connect, deliberately. An earlier version also waited for the
+    server to send a telnet IAC byte, to tell a real serial server from a port
+    forwarder that accepts and then says nothing. That was wrong: Wokwi's
+    server waits for the client to speak first, so the check rejected the very
+    thing it was meant to detect and the watcher never sent any code.
+
+    The forwarder problem is solved where it belongs, by not sitting on a port
+    anything else wants: the serial port is not forwarded, and it is 47322
+    rather than a crowded default. If a connect succeeds here, it is Wokwi.
     """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.settimeout(0.3)
-            if sock.connect_ex((HOST, PORT)) != 0:
-                return False
-
-            # IAC (0xff) opens every telnet option negotiation. The real server
-            # sends one straight away; a forwarder sends nothing and times out.
-            sock.settimeout(HANDSHAKE_TIMEOUT)
-            try:
-                return sock.recv(1) == b"\xff"
-            except (TimeoutError, socket.timeout):
-                return False
+            return sock.connect_ex((HOST, PORT)) == 0
     except OSError:
         return False
 
@@ -257,11 +249,15 @@ def repl() -> int:
 
 
 def main() -> None:
+    # The pid is here because VS Code can start this task more than once while
+    # a Codespace settles, and without it there is no way to tell one watcher
+    # restarting from several fighting.
     if not claim_single_instance():
-        print("Another watcher is already running. Nothing to do here.", flush=True)
+        print(f"[pid {os.getpid()}] Another watcher has the board. Nothing to do here.", flush=True)
         return
 
-    print(f"Watching for the simulator on port {PORT}. Press Start in the Wokwi tab.", flush=True)
+    print(f"[pid {os.getpid()}] Watching for the simulator on port {PORT}. "
+          f"Press Start in the Wokwi tab.", flush=True)
     # Wokwi opens a terminal of its own, and it stays empty because the board's
     # serial goes to this script over RFC2217 instead. Say so here, or the
     # first thing a participant does is watch the wrong terminal.
