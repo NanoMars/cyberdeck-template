@@ -9,6 +9,9 @@
     // The stubs are types only. There is no machine.py to import at rest.
     "reportMissingModuleSource": "none"
   },
+  // Lets the "Send code on simulator start" task run without a prompt.
+  // VS Code may still ask once, and never runs it in an untrusted folder.
+  "task.allowAutomaticTasks": "on",
   "files.exclude": { "**/__pycache__": true },
   "files.watcherExclude": { "**/typings/**": true },
   "search.exclude": { "typings": true }

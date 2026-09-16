@@ -14,6 +14,7 @@ Deliberately not clever. It polls a port rather than hooking Wokwi's own
 commands, because those command IDs are not documented and could change.
 """
 
+import atexit
 import os
 import socket
 import subprocess
@@ -24,6 +25,8 @@ PORT = int(os.environ.get("WOKWI_SERIAL_PORT", "4000"))
 HOST = "127.0.0.1"
 SCRIPT = os.environ.get("CYBERDECK_MAIN", "main.py")
 DEVICE = f"port:rfc2217://localhost:{PORT}"
+# Binding this port is how a second copy of the watcher notices the first.
+LOCK_PORT = int(os.environ.get("CYBERDECK_LOCK_PORT", "47321"))
 
 # MicroPython needs a moment after the port opens before it will answer.
 # Six tries over about eight seconds: long enough for a slow boot, short
@@ -33,6 +36,26 @@ BOOT_ATTEMPTS = 6
 BOOT_BACKOFF = 0.5
 # mpremote blocks if the simulation is paused, so cap each attempt.
 ATTEMPT_TIMEOUT = 20
+
+
+def claim_single_instance() -> bool:
+    """Only one watcher at a time.
+
+    In a Codespace this is started by the dev container, and locally by the
+    folder-open task. If both fire, the second should bow out rather than
+    fight the first for the serial port.
+    """
+    lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    lock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+    try:
+        lock.bind((HOST, LOCK_PORT))
+    except OSError:
+        lock.close()
+        return False
+    lock.listen(1)
+    atexit.register(lock.close)
+    globals()["_lock"] = lock  # keep it alive for the process lifetime
+    return True
 
 
 def port_is_open() -> bool:
@@ -76,6 +99,10 @@ def send() -> bool:
 
 
 def main() -> None:
+    if not claim_single_instance():
+        print("Another watcher is already running. Nothing to do here.", flush=True)
+        return
+
     print(f"Watching for the simulator on port {PORT}. Press Start in the Wokwi tab.", flush=True)
     while True:
         while not port_is_open():

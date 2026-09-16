@@ -9,6 +9,12 @@
   "postCreateCommand": "pip install --user -r requirements.txt",
   "postStartCommand": "bash .devcontainer/setup-hackatime.sh",
 
+  // Starts the watcher that sends main.py when the simulator starts.
+  // Done here rather than as a folderOpen task because automatic tasks
+  // are disabled by default and would prompt every participant.
+  "postAttachCommand": "python3 .vscode/autorun.py",
+
+
   "customizations": {
     "vscode": {
       "extensions": [
