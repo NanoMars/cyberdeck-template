@@ -5,14 +5,21 @@
       // Watches for the simulator and sends main.py the moment you press
       // Start. Runs on folder open where VS Code allows automatic tasks, and
       // is started by the dev container in a Codespace.
-      "label": "Send code on simulator start",
+      // Named for where to look, not for what it does. This label is the
+      // terminal's name in the panel, and Wokwi opens a terminal of its own
+      // that is always empty here, so the participant has to be able to tell
+      // the two apart at a glance.
+      "label": "Board output",
       "type": "shell",
       "command": "python3 .vscode/autorun.py",
       "isBackground": true,
       "runOptions": { "runOn": "folderOpen" },
-      "presentation": { "reveal": "always", "panel": "dedicated", "group": "wokwi", "clear": true },
+      "presentation": {
+        "reveal": "always", "focus": true, "panel": "dedicated",
+        "group": "wokwi", "clear": true
+      },
       "problemMatcher": [],
-      "detail": "Press Start in the Wokwi tab and your code is sent automatically."
+      "detail": "Press Start in the Wokwi tab. Your code runs and prints here."
     },
     {
       "label": "Send code now",

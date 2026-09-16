@@ -4,7 +4,7 @@
 Press "Start the simulation" in the Wokwi tab and your code is on the board a
 moment later. No task to remember, no command to type.
 
-How it works: the Wokwi extension opens a serial server on port 4000 when the
+How it works: the Wokwi extension opens a serial server on port 47322 when the
 simulation starts. This watches that port. When it opens, it copies main.py to
 the board and runs it on the same connection, so everything the code prints
 appears here from its very first line. When the simulation stops the port
@@ -28,7 +28,27 @@ try:
 except ImportError:  # Windows
     fcntl = None
 
-PORT = int(os.environ.get("WOKWI_SERIAL_PORT", "4000"))
+def _port_from_wokwi_toml(default: int) -> int:
+    """Read the port out of wokwi.toml so the two files cannot disagree.
+
+    Wokwi owns this number: it is the server, this is the client. Hard-coding
+    it in both places means a change to one silently breaks the other, and the
+    symptom is a watcher that waits forever for a port nobody opened.
+    """
+    toml = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "wokwi.toml")
+    try:
+        with open(toml) as handle:
+            for line in handle:
+                line = line.split("#", 1)[0].strip()
+                if line.startswith("rfc2217ServerPort"):
+                    return int(line.split("=", 1)[1].strip())
+    except (OSError, ValueError):
+        pass
+    return default
+
+
+# Not 4000: too crowded a default, and in a Codespace something else had it.
+PORT = int(os.environ.get("WOKWI_SERIAL_PORT") or _port_from_wokwi_toml(47322))
 HOST = "127.0.0.1"
 SCRIPT = os.environ.get("CYBERDECK_MAIN", "main.py")
 DEVICE = f"port:rfc2217://localhost:{PORT}"
@@ -242,6 +262,11 @@ def main() -> None:
         return
 
     print(f"Watching for the simulator on port {PORT}. Press Start in the Wokwi tab.", flush=True)
+    # Wokwi opens a terminal of its own, and it stays empty because the board's
+    # serial goes to this script over RFC2217 instead. Say so here, or the
+    # first thing a participant does is watch the wrong terminal.
+    print('Your code prints here, in "Board output". Wokwi\'s own terminal stays empty.',
+          flush=True)
     while True:
         while not port_is_open():
             time.sleep(0.5)

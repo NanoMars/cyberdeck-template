@@ -8,4 +8,8 @@ firmware = "RPI_PICO-20260824-v1.29.0.uf2"
 elf = "RPI_PICO-20260824-v1.29.0.uf2"
 
 # mpremote talks to the board over this port.
-rfc2217ServerPort = 4000
+# Deliberately not 4000. That is a crowded default (Rails, Phoenix, Grafana,
+# several devcontainer features) and in a Codespace something else had it
+# first, which made Wokwi fail with EADDRINUSE. Must match PORT in
+# .vscode/autorun.py.
+rfc2217ServerPort = 47322
