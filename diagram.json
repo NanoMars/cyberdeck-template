@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "author": "cyberdeck",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-pi-pico", "id": "pico", "top": 0, "left": 0, "attrs": { "env": "micropython-20241129-v1.24.1" } },
+    { "type": "wokwi-led", "id": "led1", "top": -60, "left": 120, "attrs": { "color": "red" } },
+    { "type": "wokwi-resistor", "id": "r1", "top": -10, "left": 120, "attrs": { "value": "220" } },
+    { "type": "wokwi-pushbutton", "id": "btn1", "top": 100, "left": 120, "attrs": { "color": "green" } }
+  ],
+  "connections": [
+    [ "pico:GP15", "r1:1", "green", [ "v0" ] ],
+    [ "r1:2", "led1:A", "green", [ "v0" ] ],
+    [ "led1:C", "pico:GND.1", "black", [ "v0" ] ],
+    [ "btn1:1.l", "pico:GP14", "blue", [ "v0" ] ],
+    [ "btn1:2.l", "pico:GND.3", "black", [ "v0" ] ],
+    [ "pico:GP0", "$serialMonitor:RX", "", [] ],
+    [ "pico:GP1", "$serialMonitor:TX", "", [] ]
+  ],
+  "dependencies": {}
+}

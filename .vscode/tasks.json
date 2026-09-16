@@ -1,0 +1,24 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run on Wokwi",
+      "type": "shell",
+      // Copies main.py onto the simulated board, then soft-resets so it runs.
+      // The simulator's filesystem is wiped every time it restarts, which is
+      // why this copies rather than relying on anything being there already.
+      "command": "python -m mpremote connect port:rfc2217://localhost:4000 fs cp main.py :main.py + soft-reset",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "detail": "Start the simulator first, then run this. Keep the Wokwi tab visible."
+    },
+    {
+      "label": "Open a MicroPython prompt",
+      "type": "shell",
+      "command": "python -m mpremote connect port:rfc2217://localhost:4000 repl",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "detail": "Type Python straight at the board. Ctrl-] to leave."
+    }
+  ]
+}

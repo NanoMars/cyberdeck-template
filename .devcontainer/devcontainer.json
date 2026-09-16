@@ -1,0 +1,50 @@
+{
+  "name": "cyberdeck",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+
+  // Wait for postStartCommand before the editor attaches. Without this the
+  // Hackatime extension activates first, finds no key, and shows a modal.
+  "waitFor": "postStartCommand",
+
+  "postCreateCommand": "pip install --user -r requirements.txt",
+  "postStartCommand": "bash .devcontainer/setup-hackatime.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "hackatime.hackatime-time-tracker",
+        "Wokwi.wokwi-vscode",
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ],
+      "settings": {
+        "hackatime.apiUrl": "https://hackatime.hackclub.com/api/hackatime/v1",
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.analysis.typeCheckingMode": "basic",
+        // MicroPython is not desktop Python. These stubs are what make
+        // `machine`, `rp2` and friends resolve.
+        "python.analysis.extraPaths": [
+          "/home/vscode/.local/lib/python3.12/site-packages"
+        ],
+        "python.analysis.diagnosticSeverityOverrides": {
+          "reportMissingModuleSource": "none"
+        },
+        "files.exclude": { "**/__pycache__": true },
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    },
+    "codespaces": {
+      "openFiles": ["main.py"]
+    }
+  },
+
+  "remoteEnv": {
+    // Read by the Hackatime extension if the config file is ever missing.
+    "HACKATIME_API_KEY": "${localEnv:HACKATIME_API_KEY}"
+  },
+
+  "forwardPorts": [4000],
+  "portsAttributes": {
+    "4000": { "label": "Wokwi serial", "onAutoForward": "silent" }
+  }
+}

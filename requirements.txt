@@ -1,0 +1,6 @@
+# Talks to the simulated board over the serial port Wokwi exposes.
+mpremote>=1.24
+
+# Type stubs so the editor understands `machine`, `time.sleep_ms` and the rest
+# of MicroPython, which is not the same library as desktop Python.
+micropython-rp2-rpi_pico-stubs==1.29.0.post1
