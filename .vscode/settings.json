@@ -1,7 +1,15 @@
 {
+  // MicroPython is not desktop Python. `machine`, `rp2` and the rest come
+  // from the stubs vendored in typings/, so IntelliSense works the moment you
+  // open the folder, with nothing to install and no interpreter to pick.
+  // This is also Pylance's default, set here so it survives a changed default.
+  "python.analysis.stubPath": "typings",
   "python.analysis.typeCheckingMode": "basic",
   "python.analysis.diagnosticSeverityOverrides": {
+    // The stubs are types only. There is no machine.py to import at rest.
     "reportMissingModuleSource": "none"
   },
-  "files.exclude": { "**/__pycache__": true }
+  "files.exclude": { "**/__pycache__": true },
+  "files.watcherExclude": { "**/typings/**": true },
+  "search.exclude": { "typings": true }
 }

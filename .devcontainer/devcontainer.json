@@ -21,11 +21,8 @@
         "hackatime.apiUrl": "https://hackatime.hackclub.com/api/hackatime/v1",
         "python.defaultInterpreterPath": "/usr/local/bin/python",
         "python.analysis.typeCheckingMode": "basic",
-        // MicroPython is not desktop Python. These stubs are what make
-        // `machine`, `rp2` and friends resolve.
-        "python.analysis.extraPaths": [
-          "/home/vscode/.local/lib/python3.12/site-packages"
-        ],
+        // Stubs are vendored in typings/, so this needs no install path.
+        "python.analysis.stubPath": "typings",
         "python.analysis.diagnosticSeverityOverrides": {
           "reportMissingModuleSource": "none"
         },

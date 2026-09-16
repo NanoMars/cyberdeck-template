@@ -1,0 +1,7 @@
+{
+  "//": "One source of truth for type checking, read by Pylance in VS Code and by pyright or basedpyright on the command line.",
+  "stubPath": "typings",
+  "typeCheckingMode": "basic",
+  "reportMissingModuleSource": "none",
+  "exclude": ["typings", "**/__pycache__"]
+}
