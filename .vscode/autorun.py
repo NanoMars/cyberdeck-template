@@ -69,7 +69,7 @@ LOCK_PORT = int(os.environ.get("CYBERDECK_LOCK_PORT", "47321"))
 MARKER = re.compile(rb"\x1e([0-9a-f]{4})\x1f")
 MARKER_PERIOD = 0.5
 # How long without a marker before the board is presumed gone.
-SILENCE = 1.6
+SILENCE = 1.8
 # How often to look again while the board is not answering.
 CHECK_EVERY = 2.0
 # How often to look at main.py for a save.
@@ -232,7 +232,7 @@ def port_is_open() -> bool:
         return False
 
 
-def probe_board(seconds: float = 1.5):
+def probe_board(seconds: float = 1.2):
     """Open a second connection and listen. Returns a marker id, "bare", or None.
 
     "bare" means a board that answers the REPL but runs no boot.py of ours,
@@ -494,7 +494,7 @@ def watch() -> None:
     if lock is None:
         say(f"[pid {os.getpid()}] Another watcher has the board. Nothing to do here.")
         return
-    say(f"[pid {os.getpid()}] Board output. Save {SCRIPT} with Cmd+S and it runs on the board.")
+    say(f"[pid {os.getpid()}] Board output. Save {SCRIPT} (Cmd+S or Ctrl+S) and it runs on the board.")
     say("Everything it prints appears here. Wokwi's own terminal stays empty.")
     threading.Thread(target=control_thread, args=(lock,), daemon=True).start()
     if sys.stdin.isatty():
@@ -527,7 +527,8 @@ def watch() -> None:
             if why == "port closed":
                 break
             if why == "reconnected":
-                board.close()
+                if board is not None:
+                    board.close()
                 board = None
                 # Attach again without a reset. Nothing to replay.
                 try:
@@ -564,6 +565,8 @@ def ask_watcher(line: bytes):
     try:
         conn = socket.create_connection((HOST, LOCK_PORT), timeout=2)
         conn.sendall(line + b"\n")
+        # The watcher pauses the marker before it answers. Give it time.
+        conn.settimeout(15)
         conn.makefile("rb").readline()
         return conn
     except OSError:
@@ -603,7 +606,7 @@ def repl() -> int:
             board.close()
     say("Type Python at the board. Ctrl-] leaves. Your saved main.py runs again after.")
     try:
-        return subprocess.run([sys.executable, "-m", "mpremote", "connect", MPREMOTE_DEVICE, "repl"]).returncode
+        return subprocess.run([sys.executable, "-m", "mpremote", "connect", MPREMOTE_DEVICE, "resume", "repl"]).returncode
     finally:
         if conn is not None:
             conn.close()

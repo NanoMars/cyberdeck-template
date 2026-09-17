@@ -18,7 +18,7 @@
         "group": "wokwi", "clear": true
       },
       "problemMatcher": [],
-      "detail": "Save main.py with Cmd+S and it runs on the board. Its output appears here."
+      "detail": "Save main.py (Cmd+S or Ctrl+S) and it runs on the board. Its output appears here."
     },
     {
       "label": "Send code now",
