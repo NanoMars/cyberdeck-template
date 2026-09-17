@@ -1,6 +1,8 @@
-# Talks to the simulated board over the serial port Wokwi exposes.
-# Needed to run the "Run on Wokwi" task.
-mpremote>=1.24
+# Talks to the simulated board over the serial port Wokwi exposes. The
+# watcher in .vscode/autorun.py speaks MicroPython's raw REPL itself on top
+# of this. Not mpremote: its handshake breaks on the board's marker bytes,
+# and its prompt does not work over RFC2217.
+pyserial>=3.5
 
 # Type stubs are NOT installed from here. They are vendored in typings/ so the
 # editor understands MicroPython with no setup, locally and in a Codespace

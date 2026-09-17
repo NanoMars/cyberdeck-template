@@ -14,12 +14,14 @@ soft resets the board on the same open connection. MicroPython runs main.py
 after a soft reset, and because the connection was already open, nothing it
 prints is missed.
 
-Why this does not use mpremote for that. The board's boot.py writes a marker
-to the serial line twice a second (see board_boot.py). A connection that was
+Why this does not use mpremote. The board's boot.py writes a marker to the
+serial line twice a second (see board_boot.py). A connection that was
 attached before a Restart hears nothing more, and nothing else in the
 container changes, so the marker is the only way to notice. Those marker
-bytes break mpremote's exact-match handshake. So this strips them itself.
-mpremote is still used for the interactive prompt, with the marker paused.
+bytes break mpremote's exact-match handshake, and mpremote's own prompt does
+not work over RFC2217 at all (its console wants a file descriptor). So this
+strips the marker itself and offers a prompt of its own. pyserial is the only
+dependency.
 
 Measured on 2026-09-17 in a Codespace: flash survives a Restart, several
 clients can share the serial port, and a soft reset on an open connection
@@ -59,7 +61,6 @@ HOST = "127.0.0.1"
 SCRIPT = os.environ.get("CYBERDECK_MAIN", "main.py")
 BOOT_SOURCE = os.path.join(ROOT, ".vscode", "board_boot.py")
 DEVICE_URL = f"rfc2217://{HOST}:{PORT}"
-MPREMOTE_DEVICE = f"port:{DEVICE_URL}"
 VENV = os.path.join(ROOT, ".venv")
 # Binding this port is how a second copy of the watcher notices the first.
 # Connecting to it and sending a line is how the tasks talk to the watcher.
@@ -69,16 +70,16 @@ LOCK_PORT = int(os.environ.get("CYBERDECK_LOCK_PORT", "47321"))
 MARKER = re.compile(rb"\x1e([0-9a-f]{4})\x1f")
 MARKER_PERIOD = 0.5
 # How long without a marker before the board is presumed gone.
-SILENCE = 1.8
+SILENCE = 1.5
 # How often to look again while the board is not answering.
 CHECK_EVERY = 2.0
 # How often to look at main.py for a save.
 POLL_FILES = 0.3
 
 # ---------------------------------------------------------------------------
-# Dependencies. pyserial is what talks RFC2217. mpremote brings it along, and
-# in a Codespace the dev container already installed both. Locally there may
-# be nothing, so fall back to a project .venv and re-run from there.
+# Dependencies. pyserial is what talks RFC2217. In a Codespace the dev
+# container already installed it. Locally there may be nothing, so fall back
+# to a project .venv and re-run from there.
 
 
 def ensure_dependencies() -> None:
@@ -92,13 +93,13 @@ def ensure_dependencies() -> None:
         venv_python = os.path.join(VENV, "Scripts", "python.exe")
     if os.path.abspath(sys.executable) == os.path.abspath(venv_python):
         print("Could not import pyserial even inside .venv. Run this yourself and try again:", flush=True)
-        print(f"    {venv_python} -m pip install mpremote", flush=True)
+        print(f"    {venv_python} -m pip install pyserial", flush=True)
         sys.exit(1)
     if not os.path.exists(venv_python):
         print("Setting up the tools that talk to the board. Once only.", flush=True)
         subprocess.run([sys.executable, "-m", "venv", VENV], check=True)
     result = subprocess.run(
-        [venv_python, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "mpremote>=1.24"],
+        [venv_python, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "pyserial>=3.5"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -233,7 +234,9 @@ class Board:
         self.write(b"\x02")
         self.drain(0.15)
         self.write(b"\x04")
-        self.last_marker = time.monotonic()
+        # Boot takes about a second before the first marker. Do not call that
+        # silence.
+        self.last_marker = time.monotonic() + 1.5
         self.seen_marker = False
 
 
@@ -433,7 +436,7 @@ def stream(board: Board, output: Output) -> str:
                 quiet_said = True
             continue
         if verdict == "bare" or verdict != board.marker_id:
-            return "restarted in Wokwi"
+            return "started in Wokwi" if quiet_said else "restarted in Wokwi"
         # Same id: the board never restarted, this connection just went quiet.
         return "reconnected"
 
@@ -477,11 +480,6 @@ def hand_to_repl(board) -> None:
     conn = _repl_conn
     say("\n  Handing the board to the MicroPython prompt. Close it to come back here.")
     if board is not None:
-        with contextlib.suppress(BoardGone, OSError):
-            board.enter_raw()
-            board.exec_raw(b"try:\n _cd_timer.deinit()\nexcept NameError:\n pass\n")
-            board.write(b"\x02")
-            board.drain(0.1)
         board.close()
     with contextlib.suppress(OSError):
         conn.sendall(b"ok\n")
@@ -556,7 +554,7 @@ def watch() -> None:
             if why == "repl":
                 continue
             # saved, run again, restarted in Wokwi: copy and reset.
-            if why == "restarted in Wokwi":
+            if why in ("restarted in Wokwi", "started in Wokwi"):
                 board.close()
                 board = None
                 continue
@@ -605,22 +603,51 @@ def send_once() -> int:
         return 0
 
 
+def prompt() -> int:
+    """A MicroPython prompt in this terminal, keystroke by keystroke.
+
+    The running program is interrupted first, because MicroPython only shows
+    a prompt when nothing is running. Ctrl-] leaves. Markers are stripped on
+    the way through like everywhere else.
+    """
+    try:
+        import select
+        import termios
+        import tty
+    except ImportError:
+        say("The prompt needs a Unix terminal. In a Codespace it is one.")
+        return 1
+    board = Board()
+    board.write(b"\r\x03\x02")
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        while True:
+            ready, _, _ = select.select([fd], [], [], 0.02)
+            if ready:
+                keys = os.read(fd, 1024)
+                if b"\x1d" in keys:
+                    return 0
+                board.write(keys)
+            data = board.read()
+            if data:
+                sys.stdout.buffer.write(data)
+                sys.stdout.flush()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        board.close()
+        print()
+
+
 def repl() -> int:
     if not port_is_open():
         say("The simulator is not running. Press Start in the Wokwi tab first.")
         return 1
     conn = ask_watcher(b"repl")
-    if conn is None:
-        # No watcher. Pause the marker ourselves, or mpremote cannot talk.
-        with contextlib.suppress(Exception):
-            board = Board()
-            board.enter_raw()
-            board.exec_raw(b"try:\n _cd_timer.deinit()\nexcept NameError:\n pass\n")
-            board.write(b"\x02")
-            board.close()
-    say("Type Python at the board. Ctrl-] leaves. Your saved main.py runs again after.")
+    say("Type Python at the board. Ctrl-] leaves, and your saved main.py runs again.")
     try:
-        return subprocess.run([sys.executable, "-m", "mpremote", "connect", MPREMOTE_DEVICE, "resume", "repl"]).returncode
+        return prompt()
     finally:
         if conn is not None:
             conn.close()

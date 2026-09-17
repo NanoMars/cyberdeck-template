@@ -36,7 +36,7 @@
       "command": "python3 .vscode/autorun.py --repl",
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated", "group": "wokwi" },
-      "detail": "Type Python straight at the board. Ctrl-] to leave. Your saved main.py runs again after."
+      "detail": "Type Python straight at the board. Ctrl-] leaves, and your saved main.py runs again."
     }
   ]
 }
