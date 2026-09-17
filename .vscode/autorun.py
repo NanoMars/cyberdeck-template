@@ -29,6 +29,7 @@ import contextlib
 import hashlib
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -528,6 +529,10 @@ def ask_watcher(line: bytes):
 
 
 def watch() -> None:
+    # Started by the dev container with no terminal: a hangup is not a
+    # reason to stop.
+    with contextlib.suppress(Exception):
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
     lock = claim_single_instance()
     if lock is None:
         # Another copy is running, in a terminal VS Code has probably replaced
@@ -636,6 +641,7 @@ def follow() -> int:
             sys.stdout.buffer.write(b"\n".join(tail.splitlines()[-30:]) + b"\n")
             sys.stdout.flush()
             position = len(tail)
+    last_ping = time.monotonic()
     while True:
         time.sleep(0.5)
         try:
@@ -643,11 +649,22 @@ def follow() -> int:
                 handle.seek(position)
                 data = handle.read()
         except OSError:
-            continue
+            data = b""
         if data:
             sys.stdout.buffer.write(data)
             sys.stdout.flush()
             position += len(data)
+        # If the watcher dies, this terminal becomes the watcher. Whatever
+        # killed it, the participant then still has one as long as a
+        # terminal is open.
+        if time.monotonic() - last_ping > 2:
+            last_ping = time.monotonic()
+            conn = ask_watcher(b"ping")
+            if conn is None:
+                say_only("\nThe watcher stopped. This terminal takes over.\n")
+                watch()
+                return 0
+            conn.close()
 
 
 def send_once() -> int:

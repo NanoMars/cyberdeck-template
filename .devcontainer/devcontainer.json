@@ -17,7 +17,10 @@
   // window reloads after the trust prompt and the terminal Codespaces had
   // opened does not come back, so a watcher that lived only in a terminal
   // was gone and main.py was never sent.
-  "postAttachCommand": "nohup python3 .vscode/autorun.py >/dev/null 2>&1 &",
+  // setsid, not just nohup: the lifecycle runner kills the command's process
+  // group when the command returns, and in a fresh Codespace on 2026-09-18
+  // that took the watcher with it. A new session is outside that group.
+  "postAttachCommand": "setsid -f python3 .vscode/autorun.py >/dev/null 2>&1 </dev/null",
 
   "customizations": {
     "vscode": {
