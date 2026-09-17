@@ -129,6 +129,8 @@ class Board:
         self.ser.open()
         self.tail = b""
         self.tail_since = 0.0
+        # Bytes read past a terminator by read_until, handed out first next time.
+        self.pending = b""
         self.last_marker = time.monotonic()
         self.marker_id = None
         self.seen_marker = False
@@ -161,6 +163,9 @@ class Board:
 
     def read(self) -> bytes:
         """Read whatever is there, stripped. Returns b"" on nothing."""
+        if self.pending:
+            data, self.pending = self.pending, b""
+            return data
         data = self.ser.read(4096)
         if data:
             return self.strip(data)
@@ -178,13 +183,22 @@ class Board:
         return out
 
     def read_until(self, ending: bytes, timeout: float) -> bytes:
+        """Read up to and including ending. Anything after it waits in pending.
+
+        The reply to one raw REPL command often arrives in a single chunk, so
+        the terminator is rarely the last thing read. Search, do not endswith.
+        """
         data = b""
         end = time.monotonic() + timeout
-        while not data.endswith(ending):
+        while True:
+            cut = data.find(ending)
+            if cut != -1:
+                cut += len(ending)
+                self.pending = data[cut:] + self.pending
+                return data[:cut]
             if time.monotonic() > end:
                 raise BoardGone(f"waited {timeout}s for {ending!r}, got {data[-80:]!r}")
             data += self.read()
-        return data
 
     # Raw REPL. The protocol is MicroPython's: Ctrl-A enters it, code then
     # Ctrl-D runs it, the reply is "OK", stdout, Ctrl-D, stderr, Ctrl-D, ">".
