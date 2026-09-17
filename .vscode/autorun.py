@@ -368,11 +368,30 @@ def probe_board(seconds: float = 0.8):
 _rerun = threading.Event()
 
 
+_stdout_dead = False
+
+
 def say(text: str) -> None:
-    print(text, flush=True)
+    """Log first, then print. The terminal may be gone.
+
+    The watcher often outlives the terminal that started it: the window
+    reloads after the trust prompt and the terminal with it, and the
+    orphaned process keeps the board. A print to that dead pty raises
+    OSError. Measured on 2026-09-18: the error came out of say() after a
+    successful send, connect_and_run took it for a board fault, and ran
+    main.py again, four or five times, until the pty was fully gone. So
+    the log comes first, and a dead stdout is remembered and skipped.
+    """
+    global _stdout_dead
     with contextlib.suppress(OSError):
         with open(LOG, "a") as handle:
             handle.write(time.strftime("%H:%M:%S ") + text.replace("\n", "\n         ") + "\n")
+    if _stdout_dead:
+        return
+    try:
+        print(text, flush=True)
+    except OSError:
+        _stdout_dead = True
 
 
 def file_bytes(path: str) -> bytes:
@@ -566,7 +585,8 @@ def watch() -> None:
         follow()
         return
     # Name the terminal tab, for editors that honour it.
-    sys.stdout.write("\x1b]0;cyberdeck\x07")
+    with contextlib.suppress(OSError):
+        sys.stdout.write("\x1b]0;cyberdeck\x07")
     say(f"[pid {os.getpid()}] cyberdeck. Save {SCRIPT} (Cmd+S or Ctrl+S) and it runs on the board.")
     say("Read its output in the Wokwi Terminal. This terminal only reports what happened.")
     threading.Thread(target=control_thread, args=(lock,), daemon=True).start()
