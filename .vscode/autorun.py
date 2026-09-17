@@ -224,7 +224,9 @@ class Board:
                 self.write(code[start:start + 128])
                 time.sleep(0.01)
             self.write(b"\x04")
-        self.read_until(b"OK", timeout)
+            # Plain raw REPL says OK. Raw-paste mode does not: its end-of-data
+            # Ctrl-D is the acknowledgement, and _raw_paste already read it.
+            self.read_until(b"OK", timeout)
         out = self.read_until(b"\x04", timeout)[:-1]
         err = self.read_until(b"\x04", timeout)[:-1]
         self.read_until(b">", timeout)
@@ -239,13 +241,18 @@ class Board:
         sends \x01 each time it has room for another window. Returns False
         if the board does not support it, so the caller can fall back.
         """
+        self.drain(0.05)  # nothing stale in front of the reply
         self.write(b"\x05A\x01")
-        head = self.read_until_n(2, timeout)
-        if head != b"R\x01":
-            if head == b"R\x00":
-                # Understood but declined. The board is back in normal raw REPL.
-                return False
-            raise BoardGone(f"unexpected raw-paste reply {head!r}")
+        # The reply is R then a flag byte. Search for the R: measured on
+        # 2026-09-17, the terminal drew the flag as an odd glyph, and a
+        # misread here sent the whole file to the wrong prompt.
+        self.read_until(b"R", timeout)
+        flag = self.read_until_n(1, timeout)
+        if flag == b"\x00":
+            # Understood but declined. The board is back in normal raw REPL.
+            return False
+        if flag != b"\x01":
+            raise BoardGone(f"unexpected raw-paste flag {flag!r}")
         window = int.from_bytes(self.read_until_n(2, timeout), "little")
         room = window
         sent = 0
