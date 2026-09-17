@@ -19,17 +19,19 @@
         "group": "wokwi", "clear": true
       },
       "problemMatcher": [],
-      "detail": "Press Start in the Wokwi tab. Your code runs and prints here."
+      "detail": "Press Start in the Wokwi tab. Your code runs and prints here. Press Enter here to run it again."
     },
     {
       "label": "Send code now",
       "type": "shell",
       // Goes through the same script, so it installs mpremote on first use
-      // rather than failing with "No module named mpremote".
+      // rather than failing with "No module named mpremote". When the watcher
+      // is running this only asks it to re-send, and the output stays in
+      // "Board output". Same as pressing Enter there.
       "command": "python3 .vscode/autorun.py --once",
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated", "group": "wokwi" },
-      "detail": "Send main.py right now. The simulator must already be running."
+      "detail": "Send main.py again, in \"Board output\". Same as pressing Enter there. Use it after a Restart in Wokwi."
     },
     {
       "label": "Open a MicroPython prompt",

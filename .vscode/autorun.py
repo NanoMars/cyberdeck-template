@@ -4,11 +4,18 @@
 Press "Start the simulation" in the Wokwi tab and your code is on the board a
 moment later. No task to remember, no command to type.
 
-How it works: the Wokwi extension opens a serial server on port 47322 when the
-simulation starts. This watches that port. When it opens, it copies main.py to
-the board and runs it on the same connection, so everything the code prints
-appears here from its very first line. When the simulation stops the port
-closes, and this arms itself again for the next run.
+How it works: the Wokwi extension opens a serial server on port 47322 the
+first time the simulation starts. This watches that port. When it opens, it
+copies main.py to the board and runs it on the same connection, so everything
+the code prints appears here from its very first line.
+
+What it cannot do: notice a restart. Measured on 2026-09-17 in a Codespace,
+the serial port stays open after Stop, for the life of the extension. A client
+that was attached before a Restart or a Stop/Start is left connected but hears
+nothing more, and nothing else in the container changes either: no log line,
+no file read, no new socket. So after you restart the simulation in Wokwi,
+press Enter here. That kills the dead connection, opens a fresh one to the new
+board, and sends main.py again. The "Send code now" task does the same thing.
 
 Deliberately not clever. It polls a port rather than hooking Wokwi's own
 commands, because those command IDs are not documented and could change.
@@ -21,6 +28,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 try:
@@ -54,7 +62,10 @@ SCRIPT = os.environ.get("CYBERDECK_MAIN", "main.py")
 DEVICE = f"port:rfc2217://localhost:{PORT}"
 VENV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".venv")
 # Binding this port is how a second copy of the watcher notices the first.
+# Connecting to it is how "Send code now" asks the running watcher to re-send.
 LOCK_PORT = int(os.environ.get("CYBERDECK_LOCK_PORT", "47321"))
+# How often to try again while the board is not answering.
+RETRY_EVERY = 2
 
 # MicroPython needs a moment after the port opens before it will answer.
 # Six tries over about eight seconds: long enough for a slow boot, short
@@ -67,6 +78,11 @@ ATTEMPT_TIMEOUT = 20
 
 
 SERIAL_LOCK = os.path.join(tempfile.gettempdir(), "cyberdeck-serial.lock")
+
+# The mpremote process that currently holds the board, if any, and the flag
+# that says somebody asked for main.py to be sent again.
+_child = None
+_resend = threading.Event()
 
 
 @contextlib.contextmanager
@@ -174,7 +190,7 @@ def port_is_open() -> bool:
         return False
 
 
-def send() -> bool:
+def send(verbose: bool = True) -> bool:
     """Copy the script to the board and run it, streaming its output here.
 
     Deliberately one mpremote session, holding the serial lock throughout.
@@ -185,8 +201,14 @@ def send() -> bool:
     nothing is connected, and the reader that attaches afterwards has already
     missed it. `run` executes the script on a connection that is already open,
     so the very first print arrives.
+
+    Returns when the script ends, when the board cannot be reached, or when
+    somebody asks for a re-send and the running mpremote is killed.
     """
+    global _child
     for attempt in range(1, BOOT_ATTEMPTS + 1):
+        if _resend.is_set():
+            return False
         try:
             with serial_lock():
                 # Copy quietly first. This is also the connection test: if the
@@ -199,12 +221,21 @@ def send() -> bool:
                 )
                 if copied.returncode == 0:
                     print(f"{SCRIPT} is running. Its output appears below.", flush=True)
+                    print("Edit it and press Enter here to run it again. "
+                          "Do the same after a Restart in Wokwi.", flush=True)
                     print("-" * 60, flush=True)
                     # Not captured, so the board's output lands in this
                     # terminal as it happens, from the first line onwards.
-                    subprocess.run(
-                        [PYTHON, "-m", "mpremote", "connect", DEVICE, "run", SCRIPT]
+                    # stdin is closed off so that Enter reaches the watcher,
+                    # not mpremote.
+                    _child = subprocess.Popen(
+                        [PYTHON, "-m", "mpremote", "connect", DEVICE, "run", SCRIPT],
+                        stdin=subprocess.DEVNULL,
                     )
+                    try:
+                        _child.wait()
+                    finally:
+                        _child = None
                     print("-" * 60, flush=True)
                     return True
                 result = copied
@@ -216,26 +247,84 @@ def send() -> bool:
         # retrying against a port that has gone away.
         if not port_is_open():
             return False
-        # "could not enter raw repl" means the board is still booting, or the
-        # Wokwi tab is hidden, which pauses the simulation entirely.
+        # "could not enter raw repl" means the board is still booting, the
+        # simulation is stopped, or the Wokwi tab is hidden, which pauses the
+        # simulation entirely.
         if attempt == BOOT_ATTEMPTS:
-            if result is not None:
-                sys.stderr.write(result.stderr or result.stdout)
-            sys.stderr.flush()
-            print("\n  Could not reach the board.", flush=True)
-            print("  Almost always this: the Wokwi tab is not the visible tab.", flush=True)
-            print("  Wokwi pauses the simulation when its tab is hidden, so the", flush=True)
-            print("  board stops answering. Click the Wokwi tab and try again.", flush=True)
+            if verbose:
+                if result is not None:
+                    sys.stderr.write(result.stderr or result.stdout)
+                sys.stderr.flush()
+                print("\n  Could not reach the board.", flush=True)
+                print("  Almost always this: the Wokwi tab is not the visible tab, or", flush=True)
+                print("  the simulation is stopped. Wokwi pauses the board when its", flush=True)
+                print("  tab is hidden. Click the Wokwi tab, make sure it is running.", flush=True)
+                print(f"  Trying again every {RETRY_EVERY} seconds ...", flush=True)
             return False
         time.sleep(BOOT_BACKOFF * attempt)
     return False
 
 
+def request_resend(source: str) -> None:
+    """Ask the main loop to send main.py again, interrupting a running script.
+
+    Killing the mpremote that holds the board is the whole point. After a
+    Restart in Wokwi that process is attached to a board that no longer
+    exists and will never return on its own.
+    """
+    _resend.set()
+    child = _child
+    if child is not None:
+        with contextlib.suppress(OSError):
+            child.terminate()
+    print(f"\n{source}: sending {SCRIPT} again ...", flush=True)
+
+
+def _watch_stdin() -> None:
+    """Enter in this terminal means: send the code again."""
+    try:
+        for _ in sys.stdin:
+            request_resend("Enter pressed")
+    except (OSError, ValueError):
+        pass
+
+
+def _watch_lock_port(lock: socket.socket) -> None:
+    """A connection to the lock port means: send the code again.
+
+    This is how the "Send code now" task reaches a watcher that already owns
+    the board, instead of fighting it for the serial lock.
+    """
+    while True:
+        try:
+            conn, _ = lock.accept()
+        except OSError:
+            return
+        conn.close()
+        request_resend("Send code now")
+
+
+def _watcher_is_running() -> bool:
+    try:
+        with socket.create_connection((HOST, LOCK_PORT), timeout=0.3):
+            return True
+    except OSError:
+        return False
+
+
 def send_once() -> int:
-    """Send the code now, without waiting for anything."""
+    """Send the code now, without waiting for anything.
+
+    If a watcher is running, hand the request to it, so the output lands in
+    "Board output" like every other run. Connecting to the lock port is the
+    request; the watcher does the rest.
+    """
     if not port_is_open():
         print("The simulator is not running. Press Start in the Wokwi tab first.", flush=True)
         return 1
+    if _watcher_is_running():
+        print('Asked the watcher to send main.py again. Look in "Board output".', flush=True)
+        return 0
     return 0 if send() else 1
 
 
@@ -263,17 +352,39 @@ def main() -> None:
     # first thing a participant does is watch the wrong terminal.
     print('Your code prints here, in "Board output". Wokwi\'s own terminal stays empty.',
           flush=True)
+    threading.Thread(target=_watch_lock_port, args=(globals()["_lock"],), daemon=True).start()
+    if sys.stdin.isatty():
+        threading.Thread(target=_watch_stdin, daemon=True).start()
+
     while True:
         while not port_is_open():
             time.sleep(0.5)
 
         print(f"\nSimulator running. Sending {SCRIPT} ...", flush=True)
-        send()
-
-        # Hold here until the simulation stops, so the next Start re-sends.
-        while port_is_open():
-            time.sleep(1)
-        print("Simulator stopped. Waiting for the next run.", flush=True)
+        verbose = True
+        while True:
+            _resend.clear()
+            ok = send(verbose=verbose)
+            if _resend.is_set():
+                # Somebody pressed Enter or ran the task. Go straight back in.
+                verbose = True
+                continue
+            if ok:
+                # The script ended on its own. Wait to be asked again. The
+                # port does not close when the simulation stops, so there is
+                # nothing else to wait for.
+                print(f"{SCRIPT} finished. Press Enter to run it again.", flush=True)
+                _resend.wait()
+                verbose = True
+                continue
+            if not port_is_open():
+                print("Simulator gone. Waiting for it to come back.", flush=True)
+                break
+            # Board not answering: stopped, hidden, or still booting. Say so
+            # once, then keep trying quietly until it answers.
+            verbose = False
+            if _resend.wait(RETRY_EVERY):
+                verbose = True
 
 
 if __name__ == "__main__":
