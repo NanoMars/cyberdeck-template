@@ -9,13 +9,16 @@
   "postCreateCommand": "pip install --user -r requirements.txt",
   "postStartCommand": "bash .devcontainer/setup-hackatime.sh",
 
-  // The watcher is NOT started here. It is the folderOpen task in
-  // .vscode/tasks.json, enabled by task.allowAutomaticTasks below.
+  // The watcher is NOT started here, and not by a folderOpen task either.
   //
-  // Starting it here as well meant two watchers raced for the serial port.
-  // One bowed out, but which one won decided where the output went, and
-  // postAttachCommand output lands in the collapsed setup log rather than a
-  // terminal. It also has no TTY, so the REPL could not be typed into.
+  // postAttachCommand has no terminal: its output lands in the collapsed
+  // setup log and nothing can be typed into it. A folderOpen task makes VS
+  // Code ask "allow automatic tasks?" on top of the trust prompt, because
+  // task.allowAutomaticTasks is a user setting this file cannot set, and it
+  // ran twice when the window reconnected. Both measured on 2026-09-17.
+  //
+  // Instead the default terminal profile IS the watcher, see below. The
+  // terminal Codespaces opens by itself on first connect is "Board output".
 
 
   "customizations": {
@@ -35,17 +38,27 @@
         "python.analysis.diagnosticSeverityOverrides": {
           "reportMissingModuleSource": "none"
         },
-        // Lets the folderOpen task start without prompting. The watcher has
-        // to own a real terminal, because that is where the board's output is
-        // printed and where the participant types.
-        "task.allowAutomaticTasks": "on",
+        // Every new terminal starts as "Board output": the watcher runs, and
+        // Ctrl-C drops to a plain shell. The terminal Codespaces opens on
+        // first connect therefore shows the board's output with no task, no
+        // prompt, and nothing to click. A second copy takes over from the
+        // first and turns the first terminal into a shell. A plain bash
+        // profile stays in the dropdown for anyone who wants one directly.
+        "terminal.integrated.profiles.linux": {
+          "Board output": {
+            "path": "bash",
+            "args": ["-lc", "python3 .vscode/autorun.py; exec bash -l"],
+            "icon": "circuit-board"
+          },
+          "bash": { "path": "bash", "icon": "terminal-bash" }
+        },
+        "terminal.integrated.defaultProfile.linux": "Board output",
         // Saving is what runs main.py on the board. With autosave on, a pause
         // in typing would run half-written code. Armand chose an explicit
         // Cmd+S on 2026-09-17.
         "files.autoSave": "off",
         "remote.autoForwardPorts": false,
-        "files.exclude": { "**/__pycache__": true },
-        "terminal.integrated.defaultProfile.linux": "bash"
+        "files.exclude": { "**/__pycache__": true }
       }
     },
     "codespaces": {

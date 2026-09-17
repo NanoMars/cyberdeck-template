@@ -3,7 +3,8 @@
   "tasks": [
     {
       // Runs main.py on the board every time it is saved, and shows what it
-      // prints. Runs on folder open where VS Code allows automatic tasks.
+      // prints. In a Codespace this is also the default terminal profile, so
+      // it starts by itself. This task is for running it by hand.
       // Named for where to look, not for what it does. This label is the
       // terminal's name in the panel, and Wokwi opens a terminal of its own
       // that is always empty here, so the participant has to be able to tell
@@ -12,7 +13,6 @@
       "type": "shell",
       "command": "python3 .vscode/autorun.py",
       "isBackground": true,
-      "runOptions": { "runOn": "folderOpen" },
       "presentation": {
         "reveal": "always", "focus": true, "panel": "dedicated",
         "group": "wokwi", "clear": true

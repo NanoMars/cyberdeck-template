@@ -482,7 +482,7 @@ def control_thread(lock: socket.socket) -> None:
             with contextlib.suppress(OSError):
                 conn.sendall(b"ok\n")
             conn.close()
-            say("\nA newer Board output terminal took over. This one is done.")
+            say("\nA newer Board output terminal took over. This one is a plain shell now.")
             os._exit(0)
         else:
             _rerun.set()
