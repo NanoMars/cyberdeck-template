@@ -17,6 +17,16 @@
       "detail": "Save main.py (Cmd+S or Ctrl+S) and it runs on the board. Read the output in the Wokwi Terminal."
     },
     {
+      "label": "Fix the serial port",
+      "type": "shell",
+      // After a page reload, Wokwi's old serial server can keep the port and
+      // the next Start fails with EADDRINUSE. This frees it. See autorun.py.
+      "command": "python3 .vscode/autorun.py --fix-port",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "wokwi" },
+      "detail": "Wokwi said the port is in use, or the simulation runs but nothing prints. Run this, then press Start again."
+    },
+    {
       "label": "Send code now",
       "type": "shell",
       // Asks the running watcher to run main.py again. Same as saving the

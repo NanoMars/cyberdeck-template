@@ -511,6 +511,9 @@ def watch_board(board: Board) -> str:
             if not quiet_said:
                 say("\n  The simulation is not running. Is it stopped, or is the Wokwi tab")
                 say("  hidden? Wokwi pauses a hidden tab. Waiting for it.")
+                say("  If you can see it running, the serial port is stuck. That happens")
+                say("  after the page reloads. Run the task \"Fix the serial port\" (F1,")
+                say("  Tasks: Run Task), then press Start again.")
                 quiet_said = True
             continue
         if verdict == "bare":
@@ -695,6 +698,47 @@ def follow() -> int:
             conn.close()
 
 
+def port_holder() -> int:
+    """Pid of the process listening on the serial port, or 0."""
+    try:
+        out = subprocess.run(["ss", "-ltnp"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    for line in out.splitlines():
+        if f":{PORT} " in line and "pid=" in line:
+            return int(line.split("pid=", 1)[1].split(",", 1)[0])
+    return 0
+
+
+def fix_port() -> int:
+    """Free the serial port from a Wokwi server that outlived its simulation.
+
+    Measured on 2026-09-18: in Codespaces a browser reload keeps the remote
+    extension host running. Wokwi's RFC2217 server stays bound, the
+    extension loses track of it, and the next Start fails with
+    "EADDRINUSE :::47322". The simulation then runs with no serial line.
+    The holder is the extension host. Killing it frees the port, VS Code
+    starts a new extension host, and the next Start works. The watcher
+    cannot tell this apart from a paused board, so this is a task, not
+    automatic.
+    """
+    pid = port_holder()
+    if not pid:
+        say(f"Nothing holds port {PORT}. Press Start in the Wokwi tab.")
+        return 0
+    say(f"Port {PORT} is held by process {pid}, the extension host, from before the page reloaded.")
+    say("Stopping it. VS Code starts a fresh one in a few seconds, and extensions reload.")
+    with contextlib.suppress(OSError):
+        os.kill(pid, signal.SIGTERM)
+    for _ in range(40):
+        time.sleep(0.25)
+        if not port_holder():
+            say(f"Port {PORT} is free. Press Start in the Wokwi tab, and your code runs.")
+            return 0
+    say("The port is still held. Try the task once more in a few seconds.")
+    return 1
+
+
 def send_once() -> int:
     if not port_is_open():
         say("The simulator is not running. Press Start in the Wokwi tab first.")
@@ -714,6 +758,8 @@ if __name__ == "__main__":
     try:
         if mode == "--once":
             sys.exit(send_once())
+        elif mode == "--fix-port":
+            sys.exit(fix_port())
         elif mode == "--follow":
             sys.exit(follow())
         else:
