@@ -493,16 +493,6 @@ def control_thread(lock: socket.socket) -> None:
                 conn.sendall(b"ok\n")
             conn.close()
             continue
-        if line == b"quit":
-            # A newer copy of this script is taking over. It is the one in
-            # the terminal the participant can see. Exit at once, and say
-            # nothing: this terminal is usually gone, and a print to a dead
-            # terminal can block for ever. Measured on 2026-09-17, when the
-            # old copy never let go of the lock.
-            with contextlib.suppress(OSError):
-                conn.sendall(b"ok\n")
-            conn.close()
-            os._exit(0)
         _rerun.set()
         with contextlib.suppress(OSError):
             conn.sendall(b"ok\n")
@@ -549,26 +539,13 @@ def watch() -> None:
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
     lock = claim_single_instance()
     if lock is None:
-        # Another copy is running, in a terminal VS Code has probably replaced
-        # when the window reconnected. The newest terminal is the one the
-        # participant sees, so this copy takes over.
-        ask_watcher(b"quit")
-        for attempt in range(80):
-            time.sleep(0.1)
-            lock = claim_single_instance()
-            if lock is not None:
-                break
-            if attempt == 30:
-                # It did not answer. Kill the other copies outright.
-                others = [int(pid) for pid in subprocess.run(
-                    ["pgrep", "-f", "autorun.py"], capture_output=True, text=True
-                ).stdout.split() if int(pid) != os.getpid()]
-                for pid in others:
-                    with contextlib.suppress(OSError):
-                        os.kill(pid, 9)
-        if lock is None:
-            say(f"[pid {os.getpid()}] Another cyberdeck terminal has the board and did not let go.")
-            return
+        # Another copy has the board. Do not fight it: which terminal hosts
+        # the watcher does not matter, the log is shared. Follow the log, and
+        # take over only if that copy dies. On 2026-09-18 three copies that
+        # started within seconds of each other quit and killed one another
+        # until none was left, and the Wokwi Terminal stayed empty.
+        follow()
+        return
     # Name the terminal tab, for editors that honour it.
     sys.stdout.write("\x1b]0;cyberdeck\x07")
     say(f"[pid {os.getpid()}] cyberdeck. Save {SCRIPT} (Cmd+S or Ctrl+S) and it runs on the board.")
@@ -644,6 +621,8 @@ def follow() -> int:
         watch()
         return 0
     conn.close()
+    if sys.stdin.isatty():
+        threading.Thread(target=stdin_thread, daemon=True).start()
     say_only = lambda text: print(text, flush=True)  # noqa: E731
     sys.stdout.write("\x1b]0;cyberdeck\x07")
     say_only("cyberdeck is running. Save main.py (Cmd+S or Ctrl+S) and it runs on the board.")
