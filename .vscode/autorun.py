@@ -1,31 +1,27 @@
 #!/usr/bin/env python3
 """Runs main.py on the simulated board every time you save it.
 
-Press Start in the Wokwi tab once. From then on: edit main.py, save it with
-Cmd+S, and it runs. Everything it prints appears in this terminal, from the
-first line. Restart in the Wokwi tab works too. The board runs the saved
-main.py by itself, and this notices within about two seconds and shows the
-output from the start.
+Read your program's output in the Wokwi Terminal, the terminal Wokwi opens
+when the simulation starts. It is also a MicroPython prompt: Ctrl-C stops
+your program, and you can type Python straight at the board. This terminal
+only says what the watcher did, and what went wrong.
 
 How it works. Wokwi opens a serial server on port 47322 the first time the
-simulation starts. This connects to it and speaks MicroPython's raw REPL
-protocol directly: it copies main.py and a small boot.py to the board's flash, then
-soft resets the board on the same open connection. MicroPython runs main.py
-after a soft reset, and because the connection was already open, nothing it
-prints is missed.
+simulation starts. On every save this connects to it, speaks MicroPython's
+raw REPL protocol, copies main.py and a small boot.py to the board's flash,
+and soft resets the board. MicroPython then runs boot.py and main.py. The
+template's boot.py first clears the Wokwi Terminal, so the transfer chatter
+and the MicroPython banner are gone before your program prints its first
+line. Save, and the terminal shows only your output.
 
-Why this does not use mpremote. The board's boot.py writes a marker to the
-serial line twice a second (see board_boot.py). A connection that was
-attached before a Restart hears nothing more, and nothing else in the
-container changes, so the marker is the only way to notice. Those marker
-bytes break mpremote's exact-match handshake, and mpremote's own prompt does
-not work over RFC2217 at all (its console wants a file descriptor). So this
-strips the marker itself and offers a prompt of its own. pyserial is the only
-dependency.
+Restart in the Wokwi tab. Sometimes the flash survives it and main.py runs
+again by itself. Sometimes the board comes back empty. Both were measured
+on 2026-09-17. So the board's boot.py writes an invisible marker twice a
+second, this listens for it, and when it stops and the board turns out to be
+empty, the files are sent again.
 
-Measured on 2026-09-17 in a Codespace: flash survives a Restart, several
-clients can share the serial port, and a soft reset on an open connection
-replays output from the first line.
+Why not mpremote. Its handshake breaks on the marker bytes, and its prompt
+does not work over RFC2217. pyserial is the only dependency.
 """
 
 import atexit
@@ -59,7 +55,7 @@ def _port_from_wokwi_toml(default: int) -> int:
 PORT = int(os.environ.get("WOKWI_SERIAL_PORT") or _port_from_wokwi_toml(47322))
 HOST = "127.0.0.1"
 SCRIPT = os.environ.get("CYBERDECK_MAIN", "main.py")
-BOOT_SOURCE = os.path.join(ROOT, ".vscode", "board_boot.py")
+MARKER_SOURCE = os.path.join(ROOT, ".vscode", "board_boot.py")
 # A participant's own boot.py, if they wrote one. It runs after ours.
 USER_BOOT = os.path.join(ROOT, "boot.py")
 DEVICE_URL = f"rfc2217://{HOST}:{PORT}"
@@ -68,15 +64,21 @@ VENV = os.path.join(ROOT, ".venv")
 # Connecting to it and sending a line is how the tasks talk to the watcher.
 LOCK_PORT = int(os.environ.get("CYBERDECK_LOCK_PORT", "47321"))
 
-# The marker boot.py writes: \x1e, four hex digits, \x1f.
-MARKER = re.compile(rb"\x1e([0-9a-f]{4})\x1f")
-MARKER_PERIOD = 0.5
+# The marker boot.py writes: \x1e, four control bytes, \x1f. Same table as
+# board_boot.py. None of these bytes is drawn by a terminal.
+MARKER = re.compile(rb"\x1e([\x01\x02\x03\x05\x06\x10\x12\x14\x15\x16\x17\x18\x19\x1a\x1c\x1d]{4})\x1f")
 # How long without a marker before the board is presumed gone.
 SILENCE = 1.5
 # How often to look again while the board is not answering.
 CHECK_EVERY = 2.0
+# How long to keep quiet about a board that does not answer. It takes a
+# moment to boot after Start, and that is not worth a warning.
+PATIENCE = 10.0
 # How often to look at main.py for a save.
 POLL_FILES = 0.3
+# What the board prints first at every boot, so the Wokwi Terminal shows
+# only the program's own output.
+CLEAR_SCREEN = b'print("\\x1b[2J\\x1b[H", end="")\n'
 
 # ---------------------------------------------------------------------------
 # Dependencies. pyserial is what talks RFC2217. In a Codespace the dev
@@ -98,7 +100,7 @@ def ensure_dependencies() -> None:
         print(f"    {venv_python} -m pip install pyserial", flush=True)
         sys.exit(1)
     if not os.path.exists(venv_python):
-        print("Setting up the tools that talk to the board. Once only.", flush=True)
+        print("Setting up the tool that talks to the board. Once only.", flush=True)
         subprocess.run([sys.executable, "-m", "venv", VENV], check=True)
     result = subprocess.run(
         [venv_python, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "pyserial>=3.5"],
@@ -122,8 +124,9 @@ class Board:
     """One connection to the simulated board over RFC2217.
 
     Every byte read passes through strip(), which removes the boot.py marker
-    and records when it was last seen. Protocol matching and the output the
-    participant sees both work on the stripped stream.
+    and records when it was last seen. Protocol matching works on the
+    stripped stream. Nothing else is done with the board's output: the
+    participant reads it in the Wokwi Terminal.
     """
 
     def __init__(self):
@@ -152,7 +155,7 @@ class Board:
 
         def swallow(match):
             self.last_marker = time.monotonic()
-            self.marker_id = match.group(1).decode()
+            self.marker_id = match.group(1)
             self.seen_marker = True
             return b""
 
@@ -172,7 +175,6 @@ class Board:
         data = self.ser.read(4096)
         if data:
             return self.strip(data)
-        # A lone \x1e that never completed is real output. Let it through.
         if self.tail and time.monotonic() - self.tail_since > 0.3:
             data, self.tail = self.tail, b""
             return data
@@ -226,18 +228,16 @@ class Board:
         return out
 
     def write_file(self, name: str, data: bytes) -> None:
-        self.exec_raw(f"f=open({name!r},'wb')".encode())
-        for start in range(0, len(data), 512):
-            self.exec_raw(b"f.write(" + repr(data[start:start + 512]).encode() + b")")
-        self.exec_raw(b"f.close()")
+        # One exec per file: one "OK" of chatter in the Wokwi Terminal, not
+        # one per chunk. boot.py clears it anyway.
+        self.exec_raw(f"f=open({name!r},'wb');f.write({data!r});f.close()".encode())
 
     def soft_reset(self) -> None:
         """Leave raw REPL, then soft reset. MicroPython then runs main.py."""
         self.write(b"\x02")
         self.drain(0.15)
         self.write(b"\x04")
-        # Boot takes about a second before the first marker. Do not call that
-        # silence.
+        # Boot takes about a second before the first marker. Not silence.
         self.last_marker = time.monotonic() + 1.5
         self.seen_marker = False
 
@@ -254,9 +254,11 @@ def port_is_open() -> bool:
 def probe_board(seconds: float = 1.2):
     """Open a second connection and listen. Returns a marker id, "bare", or None.
 
-    "bare" means a board that answers the REPL but runs no boot.py of ours,
-    for example a fresh simulation whose flash was wiped. None means nothing
-    answered: the simulation is stopped, or paused because its tab is hidden.
+    "bare" means a board that answers the prompt but runs no boot.py of
+    ours: a fresh simulation, or a Restart that wiped the flash. None means
+    nothing answered: the simulation is stopped, or paused behind a hidden
+    tab. The newline sent to tell those apart echoes one prompt in the Wokwi
+    Terminal, which is why it is only sent when the marker has stopped.
     """
     try:
         probe = Board()
@@ -275,78 +277,13 @@ def probe_board(seconds: float = 1.2):
 
 
 # ---------------------------------------------------------------------------
-# What the participant sees.
+# The watcher.
 
-
-class Output:
-    """Writes the board's bytes to the terminal, minus MicroPython's own noise.
-
-    Complete lines go straight through. A partial line waits a moment in case
-    it is the start of something to hide, then goes through as well.
-    """
-
-    NOISE = (b"MPY: soft reboot",)
-    BANNER = b"MicroPython v"
-    HELP = b'Type "help()" for more information.'
-
-    def __init__(self):
-        self.partial = b""
-        self.partial_since = 0.0
-        self.hide_help = False
-        self.finished_shown = False
-
-    def feed(self, data: bytes) -> None:
-        if data:
-            self.partial += data
-            self.partial_since = time.monotonic()
-        while b"\n" in self.partial:
-            line, self.partial = self.partial.split(b"\n", 1)
-            self._line(line + b"\n")
-        if self.partial and time.monotonic() - self.partial_since > 0.15:
-            if self.hide_help and self.partial.strip() == b">>>":
-                self.partial = b""
-                self.hide_help = False
-                return
-            if not self._could_be_noise(self.partial):
-                self._emit(self.partial)
-                self.partial = b""
-
-    def _could_be_noise(self, data: bytes) -> bool:
-        head = data.lstrip(b"\r")
-        return any(n.startswith(head) for n in self.NOISE + (self.BANNER, self.HELP))
-
-    def _line(self, line: bytes) -> None:
-        text = line.strip()
-        if text in self.NOISE:
-            return
-        if text.startswith(self.BANNER):
-            self.hide_help = True
-            self.finished_shown = True
-            self._emit(f"\n--- {SCRIPT} finished. Save it to run it again. ---\n".encode())
-            return
-        if self.hide_help and text == self.HELP:
-            return
-        self._emit(line)
-
-    def _emit(self, data: bytes) -> None:
-        sys.stdout.buffer.write(data)
-        sys.stdout.flush()
-
-    def flush(self) -> None:
-        if self.partial and not self.hide_help:
-            self._emit(self.partial)
-        self.partial = b""
+_rerun = threading.Event()
 
 
 def say(text: str) -> None:
     print(text, flush=True)
-
-
-# ---------------------------------------------------------------------------
-# The watcher.
-
-_rerun = threading.Event()
-_repl_conn = None  # the task's socket while it holds the board
 
 
 def file_bytes(path: str) -> bytes:
@@ -358,36 +295,36 @@ def file_bytes(path: str) -> bytes:
 
 
 def sources_digest() -> str:
-    parts = (file_bytes(os.path.join(ROOT, SCRIPT)), file_bytes(BOOT_SOURCE), file_bytes(USER_BOOT))
+    parts = (file_bytes(os.path.join(ROOT, SCRIPT)), file_bytes(MARKER_SOURCE), file_bytes(USER_BOOT))
     return hashlib.sha1(b"\0".join(parts)).hexdigest()
 
 
 def board_boot_py() -> bytes:
-    """The boot.py the board gets: our marker first, then the participant's.
+    """The boot.py the board gets: clear the screen, our marker, then theirs.
 
-    MicroPython runs boot.py before main.py at every boot. Ours must run so
-    the marker starts. Theirs, if they wrote one next to main.py, follows, so
-    a participant who wants their own boot.py keeps it.
+    MicroPython runs boot.py before main.py at every boot. The clear wipes
+    the transfer chatter and the banner from the Wokwi Terminal. The marker
+    must start. A participant's own boot.py from the project folder follows.
     """
-    ours = b"import _cyberdeck\n"
+    ours = CLEAR_SCREEN + b"import _cyberdeck\n"
     theirs = file_bytes(USER_BOOT)
     if not theirs.strip():
         return ours
     return ours + b"# --- your boot.py, copied from the project folder ---\n" + theirs
 
 
-def run_code(board: Board, why: str) -> None:
-    """Copy boot.py and main.py to the board and soft reset it."""
+def run_code(board: Board) -> None:
+    """Copy the files to the board and soft reset it."""
     board.enter_raw()
-    board.write_file("_cyberdeck.py", file_bytes(BOOT_SOURCE))
+    board.write_file("_cyberdeck.py", file_bytes(MARKER_SOURCE))
     board.write_file("boot.py", board_boot_py())
     board.write_file(SCRIPT, file_bytes(os.path.join(ROOT, SCRIPT)))
-    say(f"\n--- {SCRIPT}, {why} ---")
     board.soft_reset()
 
 
 def connect_and_run(why: str) -> Board:
     """Connect, copy, reset. Keeps trying while the board does not answer."""
+    started = time.monotonic()
     hinted = False
     while True:
         if not port_is_open():
@@ -395,44 +332,40 @@ def connect_and_run(why: str) -> Board:
         board = None
         try:
             board = Board()
-            run_code(board, why)
+            run_code(board)
+            say(f"{SCRIPT} sent, {why}. Its output is in the Wokwi Terminal.")
             return board
-        except (BoardGone, OSError) as error:
+        except (BoardGone, OSError):
             if board is not None:
                 board.close()
-            if not hinted:
+            if not hinted and time.monotonic() - started > PATIENCE:
                 say("\n  The board is not answering.")
                 say("  Almost always this: the Wokwi tab is not the visible tab, or the")
                 say("  simulation is stopped. Wokwi pauses a hidden tab. Click the Wokwi")
                 say(f"  tab and check it is running. Trying again every {CHECK_EVERY:g} seconds.")
-                say(f"  ({error})")
                 hinted = True
             if _rerun.wait(CHECK_EVERY):
                 _rerun.clear()
 
 
-def stream(board: Board, output: Output) -> str:
-    """Show output until something needs a new run. Returns why."""
+def watch_board(board: Board) -> str:
+    """Listen until something needs a new run. Returns why."""
     digest = sources_digest()
     next_poll = time.monotonic() + POLL_FILES
     quiet_said = False
     next_check = 0.0
     while True:
-        if _repl_conn is not None:
-            return "repl"
         if _rerun.is_set():
             _rerun.clear()
             return "run again"
 
-        output.feed(board.read())
+        board.read()  # keeps the marker time fresh; the bytes themselves are not needed
 
         now = time.monotonic()
         if now >= next_poll:
             next_poll = now + POLL_FILES
-            current = sources_digest()
-            if current != digest:
-                # Give the editor a moment to finish writing.
-                time.sleep(0.2)
+            if sources_digest() != digest:
+                time.sleep(0.2)  # let the editor finish writing
                 return "saved"
 
         silent = now - board.last_marker > SILENCE
@@ -453,15 +386,17 @@ def stream(board: Board, output: Output) -> str:
                 say("  hidden? Wokwi pauses a hidden tab. Waiting for it.")
                 quiet_said = True
             continue
-        if verdict == "bare" or verdict != board.marker_id:
+        if verdict == "bare":
             return "started in Wokwi" if quiet_said else "restarted in Wokwi"
-        # Same id: the board never restarted, this connection just went quiet.
+        if verdict != board.marker_id:
+            # A new id: the board rebooted with our files still on it, and is
+            # already running main.py by itself. Only the connection is dead.
+            return "reconnected"
         return "reconnected"
 
 
 def control_thread(lock: socket.socket) -> None:
-    """Tasks connect to the lock port and send one line: send or repl."""
-    global _repl_conn
+    """Tasks connect to the lock port and send one line: send or quit."""
     while True:
         try:
             conn, _ = lock.accept()
@@ -473,22 +408,18 @@ def control_thread(lock: socket.socket) -> None:
         except OSError:
             conn.close()
             continue
-        if line == b"repl":
-            conn.settimeout(None)
-            _repl_conn = conn
-        elif line == b"quit":
+        if line == b"quit":
             # A newer copy of this script is taking over. It is the one in
             # the terminal the participant can see.
             with contextlib.suppress(OSError):
                 conn.sendall(b"ok\n")
             conn.close()
-            say("\nA newer Board output terminal took over. This one is a plain shell now.")
+            say("\nA newer cyberdeck terminal took over. This one is a plain shell now.")
             os._exit(0)
-        else:
-            _rerun.set()
-            with contextlib.suppress(OSError):
-                conn.sendall(b"ok\n")
-            conn.close()
+        _rerun.set()
+        with contextlib.suppress(OSError):
+            conn.sendall(b"ok\n")
+        conn.close()
 
 
 def stdin_thread() -> None:
@@ -498,21 +429,6 @@ def stdin_thread() -> None:
             _rerun.set()
     except (OSError, ValueError):
         pass
-
-
-def hand_to_repl(board) -> None:
-    """Give the board to the prompt task until it closes its socket."""
-    global _repl_conn
-    conn = _repl_conn
-    say("\n  Handing the board to the MicroPython prompt. Close it to come back here.")
-    if board is not None:
-        board.close()
-    with contextlib.suppress(OSError):
-        conn.sendall(b"ok\n")
-        while conn.recv(1024):
-            pass
-    conn.close()
-    _repl_conn = None
 
 
 def claim_single_instance():
@@ -527,13 +443,24 @@ def claim_single_instance():
     return lock
 
 
+def ask_watcher(line: bytes):
+    """Send one line to a running watcher. Returns the socket, or None."""
+    try:
+        conn = socket.create_connection((HOST, LOCK_PORT), timeout=2)
+        conn.sendall(line + b"\n")
+        conn.settimeout(15)
+        conn.makefile("rb").readline()
+        return conn
+    except OSError:
+        return None
+
+
 def watch() -> None:
     lock = claim_single_instance()
     if lock is None:
-        # Another copy is running, in a terminal VS Code has probably replaced:
-        # the folder-open task fires again when the Codespace window reconnects
-        # while the first copy is still alive. Seen on 2026-09-17. The newest
-        # terminal is the one the participant sees, so this copy takes over.
+        # Another copy is running, in a terminal VS Code has probably replaced
+        # when the window reconnected. The newest terminal is the one the
+        # participant sees, so this copy takes over.
         ask_watcher(b"quit")
         for _ in range(50):
             time.sleep(0.1)
@@ -541,85 +468,49 @@ def watch() -> None:
             if lock is not None:
                 break
         if lock is None:
-            say(f"[pid {os.getpid()}] Another Board output terminal has the board and did not let go.")
+            say(f"[pid {os.getpid()}] Another cyberdeck terminal has the board and did not let go.")
             return
-    say(f"[pid {os.getpid()}] Board output. Save {SCRIPT} (Cmd+S or Ctrl+S) and it runs on the board.")
-    say("Everything it prints appears here. Wokwi's own terminal stays empty.")
+    say(f"[pid {os.getpid()}] cyberdeck. Save {SCRIPT} (Cmd+S or Ctrl+S) and it runs on the board.")
+    say("Read its output in the Wokwi Terminal. This terminal only reports what happened.")
     threading.Thread(target=control_thread, args=(lock,), daemon=True).start()
     if sys.stdin.isatty():
         threading.Thread(target=stdin_thread, daemon=True).start()
 
-    output = Output()
     while True:
         if not port_is_open():
-            say(f"\nWaiting for the simulator on port {PORT}. Press Start in the Wokwi tab.")
+            say(f"\nWaiting for the simulator on port {PORT}. Start it from the Wokwi tab,")
+            say("or press F1 and run \"Wokwi: Start Simulator\".")
             while not port_is_open():
                 time.sleep(0.5)
         why = "simulator started"
         board = None
         while True:
-            if _repl_conn is not None:
-                hand_to_repl(board)
-                board = None
-                why = "after the prompt"
             try:
                 if board is None:
                     board = connect_and_run(why)
-                why = stream(board, output)
+                why = watch_board(board)
             except BoardGone as error:
                 if str(error) == "port closed":
                     break
                 why = "reconnected"
             except OSError:
                 why = "reconnected"
-            output.flush()
             if why == "port closed":
                 break
-            if why == "reconnected":
-                if board is not None:
-                    board.close()
+            if board is not None:
+                board.close()
                 board = None
-                # Attach again without a reset. Nothing to replay.
+            if why == "reconnected":
+                # Attach again without a reset. The board is running by itself.
                 try:
                     board = Board()
-                    say("\n  Reconnected.")
-                    continue
                 except Exception:
-                    why = "reconnected"
-                    board = None
-                    continue
-            if why == "repl":
+                    pass
                 continue
-            # saved, run again, restarted in Wokwi: copy and reset.
-            if why in ("restarted in Wokwi", "started in Wokwi"):
-                board.close()
-                board = None
-                continue
-            try:
-                run_code(board, why)
-            except (BoardGone, OSError):
-                board.close()
-                board = None
+            # saved, run again, started or restarted in Wokwi: copy and reset.
         if board is not None:
             board.close()
         say("\nThe simulator is gone. Waiting for the next one.")
-
-
-# ---------------------------------------------------------------------------
-# The tasks.
-
-
-def ask_watcher(line: bytes):
-    """Send one line to a running watcher. Returns the socket, or None."""
-    try:
-        conn = socket.create_connection((HOST, LOCK_PORT), timeout=2)
-        conn.sendall(line + b"\n")
-        # The watcher pauses the marker before it answers. Give it time.
-        conn.settimeout(15)
-        conn.makefile("rb").readline()
-        return conn
-    except OSError:
-        return None
 
 
 def send_once() -> int:
@@ -629,80 +520,16 @@ def send_once() -> int:
     conn = ask_watcher(b"send")
     if conn is not None:
         conn.close()
-        say(f'Asked the watcher to run {SCRIPT} again. Look in "Board output".')
+        say(f"Asked the watcher to run {SCRIPT} again. Read the Wokwi Terminal.")
         return 0
-    output = Output()
-    try:
-        board = connect_and_run("sent by hand")
-        while True:
-            output.feed(board.read())
-    except KeyboardInterrupt:
-        return 0
-
-
-def prompt() -> int:
-    """A MicroPython prompt in this terminal, keystroke by keystroke.
-
-    The running program is interrupted first, because MicroPython only shows
-    a prompt when nothing is running. Ctrl-] leaves. Markers are stripped on
-    the way through like everywhere else.
-    """
-    try:
-        import select
-        import termios
-        import tty
-    except ImportError:
-        say("The prompt needs a Unix terminal. In a Codespace it is one.")
-        return 1
-    board = Board()
-    # Interrupt the program and ask for a friendly prompt. Swallow the
-    # traceback and banner that produces, then ask for a clean prompt line.
-    board.write(b"\r\x03\x02")
-    board.drain(0.5)
-    board.write(b"\r")
-    fd = sys.stdin.fileno()
-    saved = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        while True:
-            ready, _, _ = select.select([fd], [], [], 0.02)
-            if ready:
-                keys = os.read(fd, 1024)
-                if b"\x1d" in keys:
-                    return 0
-                board.write(keys)
-            data = board.read()
-            if data:
-                sys.stdout.buffer.write(data)
-                sys.stdout.flush()
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-        board.close()
-        print()
-
-
-def repl() -> int:
-    if not port_is_open():
-        say("The simulator is not running. Press Start in the Wokwi tab first.")
-        return 1
-    conn = ask_watcher(b"repl")
-    say("Type Python at the board. Ctrl-] leaves, and your saved main.py runs again.")
-    try:
-        return prompt()
-    finally:
-        if conn is not None:
-            conn.close()
+    connect_and_run("sent by hand").close()
+    return 0
 
 
 if __name__ == "__main__":
     ensure_dependencies()
     mode = sys.argv[1] if len(sys.argv) > 1 else "--watch"
     try:
-        if mode == "--once":
-            sys.exit(send_once())
-        elif mode == "--repl":
-            sys.exit(repl())
-        else:
-            watch()
+        sys.exit(send_once()) if mode == "--once" else watch()
     except KeyboardInterrupt:
         print("\nStopped.", flush=True)

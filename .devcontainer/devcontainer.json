@@ -17,8 +17,8 @@
   // task.allowAutomaticTasks is a user setting this file cannot set, and it
   // ran twice when the window reconnected. Both measured on 2026-09-17.
   //
-  // Instead the default terminal profile IS the watcher, see below. The
-  // terminal Codespaces opens by itself on first connect is "Board output".
+  // Instead the default terminal IS the watcher, see below. The terminal
+  // Codespaces opens by itself on first connect is "cyberdeck".
 
 
   "customizations": {
@@ -38,21 +38,22 @@
         "python.analysis.diagnosticSeverityOverrides": {
           "reportMissingModuleSource": "none"
         },
-        // Every new terminal starts as "Board output": the watcher runs, and
+        // Every new terminal starts as "cyberdeck": the watcher runs, and
         // Ctrl-C drops to a plain shell. The terminal Codespaces opens on
-        // first connect therefore shows the board's output with no task, no
-        // prompt, and nothing to click. A second copy takes over from the
-        // first and turns the first terminal into a shell. A plain bash
-        // profile stays in the dropdown for anyone who wants one directly.
+        // first connect therefore starts the watcher with no task, no prompt,
+        // and nothing to click. The program's output is in the Wokwi
+        // Terminal; this one only reports status. A second copy takes over
+        // from the first and turns the first terminal into a shell. Plain
+        // bash stays in the dropdown for anyone who wants one directly.
         "terminal.integrated.profiles.linux": {
-          "Board output": {
+          "cyberdeck": {
             "path": "bash",
             "args": ["-lc", "python3 .vscode/autorun.py; exec bash -l"],
             "icon": "circuit-board"
           },
           "bash": { "path": "bash", "icon": "terminal-bash" }
         },
-        "terminal.integrated.defaultProfile.linux": "Board output",
+        "terminal.integrated.defaultProfile.linux": "cyberdeck",
         // Saving is what runs main.py on the board. With autosave on, a pause
         // in typing would run half-written code. Armand chose an explicit
         // Cmd+S on 2026-09-17.

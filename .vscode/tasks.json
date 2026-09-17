@@ -2,14 +2,10 @@
   "version": "2.0.0",
   "tasks": [
     {
-      // Runs main.py on the board every time it is saved, and shows what it
-      // prints. In a Codespace this is also the default terminal profile, so
-      // it starts by itself. This task is for running it by hand.
-      // Named for where to look, not for what it does. This label is the
-      // terminal's name in the panel, and Wokwi opens a terminal of its own
-      // that is always empty here, so the participant has to be able to tell
-      // the two apart at a glance.
-      "label": "Board output",
+      // Runs main.py on the board every time it is saved, and reports what
+      // it did. In a Codespace this is also the default terminal, so it
+      // starts by itself. This task is for running it by hand.
+      "label": "cyberdeck",
       "type": "shell",
       "command": "python3 .vscode/autorun.py",
       "isBackground": true,
@@ -18,25 +14,17 @@
         "group": "wokwi", "clear": true
       },
       "problemMatcher": [],
-      "detail": "Save main.py (Cmd+S or Ctrl+S) and it runs on the board. Its output appears here."
+      "detail": "Save main.py (Cmd+S or Ctrl+S) and it runs on the board. Read the output in the Wokwi Terminal."
     },
     {
       "label": "Send code now",
       "type": "shell",
-      // Asks the running watcher to run main.py again, so the output stays in
-      // "Board output". Same as saving the file without changing it.
+      // Asks the running watcher to run main.py again. Same as saving the
+      // file without changing it.
       "command": "python3 .vscode/autorun.py --once",
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated", "group": "wokwi" },
-      "detail": "Run main.py again without changing it. Output appears in \"Board output\"."
-    },
-    {
-      "label": "Open a MicroPython prompt",
-      "type": "shell",
-      "command": "python3 .vscode/autorun.py --repl",
-      "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated", "group": "wokwi" },
-      "detail": "Type Python straight at the board. Ctrl-] leaves, and your saved main.py runs again."
+      "detail": "Run main.py again without changing it. Read the output in the Wokwi Terminal."
     }
   ]
 }
