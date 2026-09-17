@@ -72,6 +72,9 @@ MARKER = re.compile(rb"\x1e([\x02\x05\x06\x10\x12\x14\x15\x16\x17\x18\x19\x1a\x1
 SILENCE = 1.5
 # How often to look again while the board is not answering.
 CHECK_EVERY = 2.0
+# How often to try while the board is still booting after Start. A miss here
+# cost 2 s each before, and Armand measured 10 s from Start to output.
+BOOT_RETRY = 0.3
 # How long to keep quiet about a board that does not answer. It takes a
 # moment to boot after Start, and that is not worth a warning.
 PATIENCE = 10.0
@@ -83,7 +86,9 @@ POLL_FILES = 0.3
 LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), "cyberdeck.log")
 # What the board prints first at every boot, so the Wokwi Terminal shows
 # only the program's own output.
-CLEAR_SCREEN = b'print("\\x1b[2J\\x1b[H", end="")\n'
+# 2J clears the screen, 3J the scrollback, H homes the cursor. Without 3J the
+# transfer chatter stays one scroll up.
+CLEAR_SCREEN = b'print("\\x1b[2J\\x1b[3J\\x1b[H", end="")\n'
 
 # ---------------------------------------------------------------------------
 # Dependencies. pyserial is what talks RFC2217. In a Codespace the dev
@@ -215,10 +220,13 @@ class Board:
     # Ctrl-D runs it, the reply is "OK", stdout, Ctrl-D, stderr, Ctrl-D, ">".
 
     def enter_raw(self) -> None:
+        # Interrupt whatever runs, then wait for the friendly prompt before
+        # sending Ctrl-A. A board that is still booting swallows the Ctrl-A,
+        # and a blind attempt then waits out its whole timeout.
         self.write(b"\r\x03\x03")
-        self.drain(0.15)
-        self.write(b"\r\x01")
-        self.read_until(b"raw REPL; CTRL-B to exit\r\n>", 5)
+        self.read_until(b">>> ", 2)
+        self.write(b"\x01")
+        self.read_until(b"raw REPL; CTRL-B to exit\r\n>", 2)
 
     def exec_raw(self, code: bytes, timeout: float = 10) -> bytes:
         if not self._raw_paste(code, timeout):
@@ -399,12 +407,18 @@ def connect_and_run(why: str) -> Board:
         try:
             board = Board()
             run_code(board)
-            say(f"{SCRIPT} sent, {why}. Its output is in the Wokwi Terminal.")
+            say(f"{SCRIPT} sent, {why}, {time.monotonic() - started:.1f} s after the port opened. "
+                "Its output is in the Wokwi Terminal.")
             return board
         except (BoardGone, OSError):
             if board is not None:
                 board.close()
-            if not hinted and time.monotonic() - started > PATIENCE:
+            if time.monotonic() - started < PATIENCE:
+                # Still booting. Try again soon, quietly.
+                if _rerun.wait(BOOT_RETRY):
+                    _rerun.clear()
+                continue
+            if not hinted:
                 say("\n  The board is not answering.")
                 say("  Almost always this: the Wokwi tab is not the visible tab, or the")
                 say("  simulation is stopped. Wokwi pauses a hidden tab. Click the Wokwi")
