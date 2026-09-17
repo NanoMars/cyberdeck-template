@@ -9,17 +9,15 @@
   "postCreateCommand": "pip install --user -r requirements.txt",
   "postStartCommand": "bash .devcontainer/setup-hackatime.sh",
 
-  // The watcher is NOT started here, and not by a folderOpen task either.
-  //
-  // postAttachCommand has no terminal: its output lands in the collapsed
-  // setup log and nothing can be typed into it. A folderOpen task makes VS
-  // Code ask "allow automatic tasks?" on top of the trust prompt, because
-  // task.allowAutomaticTasks is a user setting this file cannot set, and it
-  // ran twice when the window reconnected. Both measured on 2026-09-17.
-  //
-  // Instead the default terminal IS the watcher, see below. The terminal
-  // Codespaces opens by itself on first connect is "cyberdeck".
-
+  // The watcher starts here, on every attach, with no terminal. The
+  // takeover in autorun.py makes each new copy replace the old one, so a
+  // reload does no harm. Its output goes to a log. The default terminal,
+  // below, follows that log, so a participant who opens a terminal sees the
+  // status without starting a second copy. Measured on 2026-09-17: the
+  // window reloads after the trust prompt and the terminal Codespaces had
+  // opened does not come back, so a watcher that lived only in a terminal
+  // was gone and main.py was never sent.
+  "postAttachCommand": "nohup python3 .vscode/autorun.py >/dev/null 2>&1 &",
 
   "customizations": {
     "vscode": {
@@ -38,17 +36,14 @@
         "python.analysis.diagnosticSeverityOverrides": {
           "reportMissingModuleSource": "none"
         },
-        // Every new terminal starts as "cyberdeck": the watcher runs, and
-        // Ctrl-C drops to a plain shell. The terminal Codespaces opens on
-        // first connect therefore starts the watcher with no task, no prompt,
-        // and nothing to click. The program's output is in the Wokwi
-        // Terminal; this one only reports status. A second copy takes over
-        // from the first and turns the first terminal into a shell. Plain
-        // bash stays in the dropdown for anyone who wants one directly.
+        // Every new terminal starts as "cyberdeck": it follows the watcher's
+        // log, or becomes the watcher if none is running. Ctrl-C drops to a
+        // plain shell. The program's output is in the Wokwi Terminal; this
+        // one only reports status. Plain bash stays in the dropdown.
         "terminal.integrated.profiles.linux": {
           "cyberdeck": {
             "path": "bash",
-            "args": ["-lc", "python3 .vscode/autorun.py; exec bash -l"],
+            "args": ["-lc", "python3 .vscode/autorun.py --follow; exec bash -l"],
             "icon": "circuit-board"
           },
           "bash": { "path": "bash", "icon": "terminal-bash" }

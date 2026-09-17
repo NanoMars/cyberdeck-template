@@ -76,6 +76,10 @@ CHECK_EVERY = 2.0
 PATIENCE = 10.0
 # How often to look at main.py for a save.
 POLL_FILES = 0.3
+# Everything this prints also goes here, so a terminal opened later can show
+# what happened while nobody was looking. The dev container starts the
+# watcher without a terminal.
+LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), "cyberdeck.log")
 # What the board prints first at every boot, so the Wokwi Terminal shows
 # only the program's own output.
 CLEAR_SCREEN = b'print("\\x1b[2J\\x1b[H", end="")\n'
@@ -342,6 +346,9 @@ _rerun = threading.Event()
 
 def say(text: str) -> None:
     print(text, flush=True)
+    with contextlib.suppress(OSError):
+        with open(LOG, "a") as handle:
+            handle.write(time.strftime("%H:%M:%S ") + text.replace("\n", "\n         ") + "\n")
 
 
 def file_bytes(path: str) -> bytes:
@@ -464,6 +471,11 @@ def control_thread(lock: socket.socket) -> None:
             conn.settimeout(2)
             line = conn.makefile("rb").readline().strip()
         except OSError:
+            conn.close()
+            continue
+        if line == b"ping":
+            with contextlib.suppress(OSError):
+                conn.sendall(b"ok\n")
             conn.close()
             continue
         if line == b"quit":
@@ -601,6 +613,43 @@ def watch() -> None:
         say("\nThe simulator is gone. Waiting for the next one.")
 
 
+def follow() -> int:
+    """Show the watcher's log and keep showing it. Ctrl-C leaves.
+
+    The dev container starts the watcher with no terminal. This is what a
+    terminal opened afterwards runs, so the participant sees the status
+    without starting a second copy. If no watcher is running, become one.
+    """
+    conn = ask_watcher(b"ping")
+    if conn is None:
+        watch()
+        return 0
+    conn.close()
+    say_only = lambda text: print(text, flush=True)  # noqa: E731
+    sys.stdout.write("\x1b]0;cyberdeck\x07")
+    say_only("cyberdeck is running. Save main.py (Cmd+S or Ctrl+S) and it runs on the board.")
+    say_only("Read its output in the Wokwi Terminal. This shows what the watcher did:\n")
+    position = 0
+    with contextlib.suppress(OSError):
+        with open(LOG, "rb") as handle:
+            tail = handle.read()
+            sys.stdout.buffer.write(b"\n".join(tail.splitlines()[-30:]) + b"\n")
+            sys.stdout.flush()
+            position = len(tail)
+    while True:
+        time.sleep(0.5)
+        try:
+            with open(LOG, "rb") as handle:
+                handle.seek(position)
+                data = handle.read()
+        except OSError:
+            continue
+        if data:
+            sys.stdout.buffer.write(data)
+            sys.stdout.flush()
+            position += len(data)
+
+
 def send_once() -> int:
     if not port_is_open():
         say("The simulator is not running. Press Start in the Wokwi tab first.")
@@ -618,6 +667,11 @@ if __name__ == "__main__":
     ensure_dependencies()
     mode = sys.argv[1] if len(sys.argv) > 1 else "--watch"
     try:
-        sys.exit(send_once()) if mode == "--once" else watch()
+        if mode == "--once":
+            sys.exit(send_once())
+        elif mode == "--follow":
+            sys.exit(follow())
+        else:
+            watch()
     except KeyboardInterrupt:
         print("\nStopped.", flush=True)
