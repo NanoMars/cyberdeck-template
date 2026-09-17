@@ -476,6 +476,14 @@ def control_thread(lock: socket.socket) -> None:
         if line == b"repl":
             conn.settimeout(None)
             _repl_conn = conn
+        elif line == b"quit":
+            # A newer copy of this script is taking over. It is the one in
+            # the terminal the participant can see.
+            with contextlib.suppress(OSError):
+                conn.sendall(b"ok\n")
+            conn.close()
+            say("\nA newer Board output terminal took over. This one is done.")
+            os._exit(0)
         else:
             _rerun.set()
             with contextlib.suppress(OSError):
@@ -522,8 +530,19 @@ def claim_single_instance():
 def watch() -> None:
     lock = claim_single_instance()
     if lock is None:
-        say(f"[pid {os.getpid()}] Another watcher has the board. Nothing to do here.")
-        return
+        # Another copy is running, in a terminal VS Code has probably replaced:
+        # the folder-open task fires again when the Codespace window reconnects
+        # while the first copy is still alive. Seen on 2026-09-17. The newest
+        # terminal is the one the participant sees, so this copy takes over.
+        ask_watcher(b"quit")
+        for _ in range(50):
+            time.sleep(0.1)
+            lock = claim_single_instance()
+            if lock is not None:
+                break
+        if lock is None:
+            say(f"[pid {os.getpid()}] Another Board output terminal has the board and did not let go.")
+            return
     say(f"[pid {os.getpid()}] Board output. Save {SCRIPT} (Cmd+S or Ctrl+S) and it runs on the board.")
     say("Everything it prints appears here. Wokwi's own terminal stays empty.")
     threading.Thread(target=control_thread, args=(lock,), daemon=True).start()
