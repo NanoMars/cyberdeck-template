@@ -43,6 +43,7 @@
         // in typing would run half-written code. Armand chose an explicit
         // Cmd+S on 2026-09-17.
         "files.autoSave": "off",
+        "remote.autoForwardPorts": false,
         "files.exclude": { "**/__pycache__": true },
         "terminal.integrated.defaultProfile.linux": "bash"
       }
@@ -67,7 +68,12 @@
   //
   // Nothing outside the container needs that port. Wokwi's serial server and
   // mpremote are both inside it and talk over localhost.
+  // VS Code also forwards any port it sees a process listening on. Nothing
+  // outside the container needs the watcher's lock port or Wokwi's serial
+  // port, and a forwarder holding one of them is one way to get
+  // "EADDRINUSE :::47322" from Wokwi. So do not forward anything by itself.
   "portsAttributes": {
+    "47321": { "label": "cyberdeck watcher", "onAutoForward": "ignore" },
     "47322": { "label": "Wokwi serial", "onAutoForward": "ignore" }
   }
 }

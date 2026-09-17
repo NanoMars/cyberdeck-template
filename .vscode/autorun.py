@@ -9,7 +9,7 @@ output from the start.
 
 How it works. Wokwi opens a serial server on port 47322 the first time the
 simulation starts. This connects to it and speaks MicroPython's raw REPL
-protocol directly: it copies boot.py and main.py to the board's flash, then
+protocol directly: it copies main.py and a small boot.py to the board's flash, then
 soft resets the board on the same open connection. MicroPython runs main.py
 after a soft reset, and because the connection was already open, nothing it
 prints is missed.
@@ -60,6 +60,8 @@ PORT = int(os.environ.get("WOKWI_SERIAL_PORT") or _port_from_wokwi_toml(47322))
 HOST = "127.0.0.1"
 SCRIPT = os.environ.get("CYBERDECK_MAIN", "main.py")
 BOOT_SOURCE = os.path.join(ROOT, ".vscode", "board_boot.py")
+# A participant's own boot.py, if they wrote one. It runs after ours.
+USER_BOOT = os.path.join(ROOT, "boot.py")
 DEVICE_URL = f"rfc2217://{HOST}:{PORT}"
 VENV = os.path.join(ROOT, ".venv")
 # Binding this port is how a second copy of the watcher notices the first.
@@ -356,13 +358,29 @@ def file_bytes(path: str) -> bytes:
 
 
 def sources_digest() -> str:
-    return hashlib.sha1(file_bytes(os.path.join(ROOT, SCRIPT)) + b"\0" + file_bytes(BOOT_SOURCE)).hexdigest()
+    parts = (file_bytes(os.path.join(ROOT, SCRIPT)), file_bytes(BOOT_SOURCE), file_bytes(USER_BOOT))
+    return hashlib.sha1(b"\0".join(parts)).hexdigest()
+
+
+def board_boot_py() -> bytes:
+    """The boot.py the board gets: our marker first, then the participant's.
+
+    MicroPython runs boot.py before main.py at every boot. Ours must run so
+    the marker starts. Theirs, if they wrote one next to main.py, follows, so
+    a participant who wants their own boot.py keeps it.
+    """
+    ours = b"import _cyberdeck\n"
+    theirs = file_bytes(USER_BOOT)
+    if not theirs.strip():
+        return ours
+    return ours + b"# --- your boot.py, copied from the project folder ---\n" + theirs
 
 
 def run_code(board: Board, why: str) -> None:
     """Copy boot.py and main.py to the board and soft reset it."""
     board.enter_raw()
-    board.write_file("boot.py", file_bytes(BOOT_SOURCE))
+    board.write_file("_cyberdeck.py", file_bytes(BOOT_SOURCE))
+    board.write_file("boot.py", board_boot_py())
     board.write_file(SCRIPT, file_bytes(os.path.join(ROOT, SCRIPT)))
     say(f"\n--- {SCRIPT}, {why} ---")
     board.soft_reset()

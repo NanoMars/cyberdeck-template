@@ -1,6 +1,7 @@
-# The watcher copies this file to the board as boot.py, every time it runs
-# your code. Do not put your project here. Everything of yours lives in
-# main.py.
+# The watcher copies this file to the board as _cyberdeck.py, every time it
+# runs your code, and writes a boot.py that imports it. Do not put your
+# project here. Everything of yours lives in main.py. If you want your own
+# boot.py, write one next to main.py: the watcher runs it after this file.
 #
 # What it does: twice a second it writes a short invisible marker to the
 # serial line. The watcher in .vscode/autorun.py strips the marker before it
