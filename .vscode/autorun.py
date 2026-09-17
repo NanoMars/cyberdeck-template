@@ -66,7 +66,7 @@ LOCK_PORT = int(os.environ.get("CYBERDECK_LOCK_PORT", "47321"))
 
 # The marker boot.py writes: \x1e, four control bytes, \x1f. Same table as
 # board_boot.py. None of these bytes is drawn by a terminal.
-MARKER = re.compile(rb"\x1e([\x01\x02\x03\x05\x06\x10\x12\x14\x15\x16\x17\x18\x19\x1a\x1c\x1d]{4})\x1f")
+MARKER = re.compile(rb"\x1e([\x02\x05\x06\x10\x12\x14\x15\x16\x17\x18\x19\x1a\x1c\x1d]{4})\x1f")
 # How long without a marker before the board is presumed gone.
 SILENCE = 1.5
 # How often to look again while the board is not answering.
@@ -140,6 +140,7 @@ class Board:
         self.last_marker = time.monotonic()
         self.marker_id = None
         self.seen_marker = False
+        self.sent_at = 0.0
 
     def close(self) -> None:
         with contextlib.suppress(Exception):
@@ -215,10 +216,14 @@ class Board:
         self.read_until(b"raw REPL; CTRL-B to exit\r\n>", 5)
 
     def exec_raw(self, code: bytes, timeout: float = 10) -> bytes:
-        for start in range(0, len(code), 256):
-            self.write(code[start:start + 256])
-            time.sleep(0.005)
-        self.write(b"\x04")
+        if not self._raw_paste(code, timeout):
+            # Plain raw REPL has no flow control. Measured on 2026-09-17: a
+            # 1.6 KB file sent in one go arrived with bytes missing, at a
+            # different place each time. Small chunks, paced, like mpremote.
+            for start in range(0, len(code), 128):
+                self.write(code[start:start + 128])
+                time.sleep(0.01)
+            self.write(b"\x04")
         self.read_until(b"OK", timeout)
         out = self.read_until(b"\x04", timeout)[:-1]
         err = self.read_until(b"\x04", timeout)[:-1]
@@ -226,6 +231,51 @@ class Board:
         if err:
             raise BoardGone(err.decode(errors="replace"))
         return out
+
+    def _raw_paste(self, code: bytes, timeout: float) -> bool:
+        """Send code with MicroPython's raw-paste mode, which has flow control.
+
+        The board answers Ctrl-E "A" Ctrl-A with "R" and a window size, then
+        sends \x01 each time it has room for another window. Returns False
+        if the board does not support it, so the caller can fall back.
+        """
+        self.write(b"\x05A\x01")
+        head = self.read_until_n(2, timeout)
+        if head != b"R\x01":
+            if head == b"R\x00":
+                # Understood but declined. The board is back in normal raw REPL.
+                return False
+            raise BoardGone(f"unexpected raw-paste reply {head!r}")
+        window = int.from_bytes(self.read_until_n(2, timeout), "little")
+        room = window
+        sent = 0
+        deadline = time.monotonic() + timeout
+        while sent < len(code):
+            while room == 0:
+                byte = self.read_until_n(1, max(0.1, deadline - time.monotonic()))
+                if byte == b"\x01":
+                    room += window
+                elif byte == b"\x04":
+                    self.write(b"\x04")
+                    raise BoardGone("board aborted the raw-paste transfer")
+            piece = code[sent:sent + room]
+            self.write(piece)
+            room -= len(piece)
+            sent += len(piece)
+        self.write(b"\x04")
+        self.read_until(b"\x04", timeout)
+        return True
+
+    def read_until_n(self, count: int, timeout: float) -> bytes:
+        """Read exactly count stripped bytes, or raise."""
+        data = b""
+        end = time.monotonic() + timeout
+        while len(data) < count:
+            if time.monotonic() > end:
+                raise BoardGone(f"waited {timeout}s for {count} bytes, got {data!r}")
+            data += self.read()
+        self.pending = data[count:] + self.pending
+        return data[:count]
 
     def write_file(self, name: str, data: bytes) -> None:
         # One exec per file: one "OK" of chatter in the Wokwi Terminal, not
@@ -240,6 +290,7 @@ class Board:
         # Boot takes about a second before the first marker. Not silence.
         self.last_marker = time.monotonic() + 1.5
         self.seen_marker = False
+        self.sent_at = time.monotonic()
 
 
 def port_is_open() -> bool:
@@ -484,11 +535,29 @@ def watch() -> None:
                 time.sleep(0.5)
         why = "simulator started"
         board = None
+        failures = 0
         while True:
             try:
                 if board is None:
                     board = connect_and_run(why)
                 why = watch_board(board)
+                if why in ("restarted in Wokwi", "started in Wokwi") and time.monotonic() - board.sent_at < 8:
+                    # The files were sent and the marker never came: the
+                    # board did not run them. Three times in a row is a fault
+                    # in the files, not a restart. Stop hammering the board.
+                    failures += 1
+                    if failures >= 3:
+                        say("\n  The board did not run the files three times in a row. Look at the")
+                        say("  Wokwi Terminal for the error. Save main.py to try again.")
+                        board.close()
+                        board = None
+                        _rerun.wait()
+                        _rerun.clear()
+                        failures = 0
+                        why = "run again"
+                        continue
+                else:
+                    failures = 0
             except BoardGone as error:
                 if str(error) == "port closed":
                     break

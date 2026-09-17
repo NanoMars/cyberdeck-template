@@ -17,9 +17,12 @@ import machine
 import random
 import sys
 
-_T = "\x01\x02\x03\x05\x06\x10\x12\x14\x15\x16\x17\x18\x19\x1a\x1c\x1d"
+# Fourteen control characters no terminal draws. Not \x01 or \x04, which
+# MicroPython's raw-paste mode uses as acknowledgements, and not the ones
+# that move the cursor or ring the bell.
+_T = "\x02\x05\x06\x10\x12\x14\x15\x16\x17\x18\x19\x1a\x1c\x1d"
 _n = random.getrandbits(16)
-_cd_id = "".join(_T[(_n >> s) & 15] for s in (12, 8, 4, 0))
+_cd_id = "".join(_T[(_n // 14 ** k) % 14] for k in range(4))
 
 
 def _cd_heartbeat(_timer):
