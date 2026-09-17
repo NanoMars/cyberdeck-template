@@ -9,18 +9,15 @@
   "postCreateCommand": "pip install --user -r requirements.txt",
   "postStartCommand": "bash .devcontainer/setup-hackatime.sh",
 
-  // The watcher starts here, on every attach, with no terminal. The
-  // takeover in autorun.py makes each new copy replace the old one, so a
-  // reload does no harm. Its output goes to a log. The default terminal,
-  // below, follows that log, so a participant who opens a terminal sees the
-  // status without starting a second copy. Measured on 2026-09-17: the
-  // window reloads after the trust prompt and the terminal Codespaces had
-  // opened does not come back, so a watcher that lived only in a terminal
-  // was gone and main.py was never sent.
-  // setsid, not just nohup: the lifecycle runner kills the command's process
-  // group when the command returns, and in a fresh Codespace on 2026-09-18
-  // that took the watcher with it. A new session is outside that group.
-  "postAttachCommand": "setsid -f python3 .vscode/autorun.py >/dev/null 2>&1 </dev/null",
+  // The watcher starts here, on every attach, in the foreground. The
+  // lifecycle runner shows the command in a "Codespaces" terminal and keeps
+  // it alive for as long as that terminal exists. Detaching it instead, with
+  // nohup or setsid, did not work: the runner killed the detached process
+  // as soon as the command returned, measured in fresh Codespaces on
+  // 2026-09-18. On a reattach a new copy starts and the takeover in
+  // autorun.py makes the old one exit. Output also goes to a log, which the
+  // default terminal below follows.
+  "postAttachCommand": "python3 .vscode/autorun.py",
 
   "customizations": {
     "vscode": {
