@@ -618,7 +618,11 @@ def prompt() -> int:
         say("The prompt needs a Unix terminal. In a Codespace it is one.")
         return 1
     board = Board()
+    # Interrupt the program and ask for a friendly prompt. Swallow the
+    # traceback and banner that produces, then ask for a clean prompt line.
     board.write(b"\r\x03\x02")
+    board.drain(0.5)
+    board.write(b"\r")
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     try:
