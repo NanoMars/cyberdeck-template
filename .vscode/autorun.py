@@ -468,11 +468,13 @@ def control_thread(lock: socket.socket) -> None:
             continue
         if line == b"quit":
             # A newer copy of this script is taking over. It is the one in
-            # the terminal the participant can see.
+            # the terminal the participant can see. Exit at once, and say
+            # nothing: this terminal is usually gone, and a print to a dead
+            # terminal can block for ever. Measured on 2026-09-17, when the
+            # old copy never let go of the lock.
             with contextlib.suppress(OSError):
                 conn.sendall(b"ok\n")
             conn.close()
-            say("\nA newer cyberdeck terminal took over. This one is a plain shell now.")
             os._exit(0)
         _rerun.set()
         with contextlib.suppress(OSError):
@@ -520,14 +522,24 @@ def watch() -> None:
         # when the window reconnected. The newest terminal is the one the
         # participant sees, so this copy takes over.
         ask_watcher(b"quit")
-        for _ in range(50):
+        for attempt in range(80):
             time.sleep(0.1)
             lock = claim_single_instance()
             if lock is not None:
                 break
+            if attempt == 30:
+                # It did not answer. Kill the other copies outright.
+                others = [int(pid) for pid in subprocess.run(
+                    ["pgrep", "-f", "autorun.py"], capture_output=True, text=True
+                ).stdout.split() if int(pid) != os.getpid()]
+                for pid in others:
+                    with contextlib.suppress(OSError):
+                        os.kill(pid, 9)
         if lock is None:
             say(f"[pid {os.getpid()}] Another cyberdeck terminal has the board and did not let go.")
             return
+    # Name the terminal tab, for editors that honour it.
+    sys.stdout.write("\x1b]0;cyberdeck\x07")
     say(f"[pid {os.getpid()}] cyberdeck. Save {SCRIPT} (Cmd+S or Ctrl+S) and it runs on the board.")
     say("Read its output in the Wokwi Terminal. This terminal only reports what happened.")
     threading.Thread(target=control_thread, args=(lock,), daemon=True).start()

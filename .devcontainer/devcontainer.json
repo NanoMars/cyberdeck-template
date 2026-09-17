@@ -54,6 +54,9 @@
           "bash": { "path": "bash", "icon": "terminal-bash" }
         },
         "terminal.integrated.defaultProfile.linux": "cyberdeck",
+        // Let the watcher name its own tab "cyberdeck". Other terminals keep
+        // the name their shell sets.
+        "terminal.integrated.tabs.title": "${sequence}",
         // Saving is what runs main.py on the board. With autosave on, a pause
         // in typing would run half-written code. Armand chose an explicit
         // Cmd+S on 2026-09-17.
