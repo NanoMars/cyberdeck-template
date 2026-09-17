@@ -39,6 +39,10 @@
         // to own a real terminal, because that is where the board's output is
         // printed and where the participant types.
         "task.allowAutomaticTasks": "on",
+        // Saving is what runs main.py on the board. With autosave on, a pause
+        // in typing would run half-written code. Armand chose an explicit
+        // Cmd+S on 2026-09-17.
+        "files.autoSave": "off",
         "files.exclude": { "**/__pycache__": true },
         "terminal.integrated.defaultProfile.linux": "bash"
       }
