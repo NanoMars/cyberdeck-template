@@ -527,15 +527,6 @@ def control_thread(lock: socket.socket) -> None:
         conn.close()
 
 
-def stdin_thread() -> None:
-    """Enter in this terminal runs main.py again. Not advertised, but handy."""
-    try:
-        for _ in sys.stdin:
-            _rerun.set()
-    except (OSError, ValueError):
-        pass
-
-
 def claim_single_instance():
     lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -579,8 +570,6 @@ def watch() -> None:
     say(f"[pid {os.getpid()}] cyberdeck. Save {SCRIPT} (Cmd+S or Ctrl+S) and it runs on the board.")
     say("Read its output in the Wokwi Terminal. This terminal only reports what happened.")
     threading.Thread(target=control_thread, args=(lock,), daemon=True).start()
-    if sys.stdin.isatty():
-        threading.Thread(target=stdin_thread, daemon=True).start()
 
     while True:
         if not port_is_open():
@@ -649,8 +638,6 @@ def follow() -> int:
         watch()
         return 0
     conn.close()
-    if sys.stdin.isatty():
-        threading.Thread(target=stdin_thread, daemon=True).start()
     say_only = lambda text: print(text, flush=True)  # noqa: E731
     sys.stdout.write("\x1b]0;cyberdeck\x07")
     say_only("cyberdeck is running. Save main.py (Cmd+S or Ctrl+S) and it runs on the board.")
